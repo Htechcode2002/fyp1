@@ -4,3 +4,4 @@ ultralytics
 numpy
 mysql-connector-python
 matplotlib
+requests

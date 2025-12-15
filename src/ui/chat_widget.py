@@ -19,7 +19,7 @@ class AIWorker(QThread):
 class AIChatWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.agent = LLMAgent(model="qwen2.5:1.5b") # Persistent Agent
+        self.agent = LLMAgent() # Use default model (dolphin3:latest)
         self.setFixedHeight(400) # Give it some height
         
         self.layout = QVBoxLayout(self)
