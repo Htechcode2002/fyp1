@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python main.py:*)",
+      "Bash(python:*)",
+      "Bash(pip show:*)",
+      "Bash(.venvScriptspython -c \"import torch; print(''PyTorch version:'', torch.__version__); print(''CUDA available:'', torch.cuda.is_available()); print(''CUDA version:'', torch.version.cuda if hasattr(torch.version, ''cuda'') else ''N/A'')\")",
+      "Bash(venv/Scripts/python.exe:*)",
+      "Bash(venv/Scripts/pip.exe uninstall:*)",
+      "Bash(venv/Scripts/pip.exe install:*)",
+      "Bash(xcopy:*)",
+      "Bash(robocopy:*)"
+    ]
+  }
+}

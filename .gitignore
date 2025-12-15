@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+venv/
+env/
+.env
+
+# IDE settings
+.vscode/
+.idea/
+
+# Models (Large files)
+models/
+*.pt
+*.pth
+*.onnx
+
+# Database & Logs
+*.log
+*.sqlite
+*.db
+
+# Config (Optional: remove if you want to track config)
+# config.json
+
+# OS
+.DS_Store
+Thumbs.db

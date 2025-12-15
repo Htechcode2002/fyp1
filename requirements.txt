@@ -1,0 +1,6 @@
+PySide6
+opencv-python
+ultralytics
+numpy
+mysql-connector-python
+matplotlib

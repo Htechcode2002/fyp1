@@ -1,0 +1,34 @@
+{
+    "db": {
+        "host": "gateway01.ap-southeast-1.prod.aws.tidbcloud.com",
+        "port": 4000,
+        "user": "oGLNBaeCVwvBBbf.root",
+        "password": "13POyKq9TeOZl0Et",
+        "database": "test"
+    },
+    "yolo": {
+        "model_path": "models\\yolo12n.pt"
+    },
+    "thresholds": {
+        "warning": 20,
+        "critical": 50
+    },
+    "video_sources": [
+        {
+            "id": "7a620278",
+            "name": "test",
+            "location": "test",
+            "type": "file",
+            "path": "C:/Users/Charles/Downloads/853889-hd_1920_1080_25fps.mp4",
+            "danger_threshold": 100
+        },
+        {
+            "id": "6a3ea6f1",
+            "name": "wow",
+            "location": "wow",
+            "type": "file",
+            "path": "C:/Users/Charles/Downloads/853889-hd_1920_1080_25fps.mp4",
+            "danger_threshold": 100
+        }
+    ]
+}
