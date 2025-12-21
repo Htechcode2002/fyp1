@@ -15,19 +15,19 @@
     },
     "video_sources": [
         {
-            "id": "7a620278",
-            "name": "test",
-            "location": "test",
+            "id": "735f2eda",
+            "name": "Source 735f2eda",
+            "location": "",
             "type": "file",
             "path": "C:/Users/Charles/Downloads/853889-hd_1920_1080_25fps.mp4",
             "danger_threshold": 100
         },
         {
-            "id": "6a3ea6f1",
-            "name": "wow",
-            "location": "wow",
+            "id": "8e204f39",
+            "name": "Source 8e204f39",
+            "location": "",
             "type": "file",
-            "path": "C:/Users/Charles/Downloads/853889-hd_1920_1080_25fps.mp4",
+            "path": "C:/Users/Charles/Downloads/9f1dd420ddd7460da938a00e417f7bc9.mp4",
             "danger_threshold": 100
         }
     ]

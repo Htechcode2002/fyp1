@@ -261,6 +261,32 @@ class VideoDetailDialog(QDialog):
         self.btn_toggle_heatmap.clicked.connect(self.toggle_heatmap)
         self.update_heatmap_style()
 
+        # --- Toggle Fall Detection (New) ---
+        self.btn_toggle_fall_detection = QPushButton("🚨 Fall Detection is OFF")
+        self.btn_toggle_fall_detection.setCheckable(True)
+        self.btn_toggle_fall_detection.setChecked(False)
+        self.btn_toggle_fall_detection.setCursor(Qt.PointingHandCursor)
+        self.fall_detection_active = False
+
+        lbl_fall_info = QLabel("Detects when people fall down")
+        lbl_fall_info.setStyleSheet("color: #64748b; font-size: 11px; margin-bottom: 10px;")
+
+        self.btn_toggle_fall_detection.clicked.connect(self.toggle_fall_detection)
+        self.update_fall_detection_style()
+
+        # --- Toggle 17-Point Pose (New) ---
+        self.btn_toggle_pose = QPushButton("👤 17-Point Pose is OFF")
+        self.btn_toggle_pose.setCheckable(True)
+        self.btn_toggle_pose.setChecked(False)
+        self.btn_toggle_pose.setCursor(Qt.PointingHandCursor)
+        self.pose_active = False
+
+        lbl_pose_info = QLabel("Visualizes 17 body keypoints")
+        lbl_pose_info.setStyleSheet("color: #64748b; font-size: 11px; margin-bottom: 10px;")
+
+        self.btn_toggle_pose.clicked.connect(self.toggle_pose)
+        self.update_pose_style()
+
         # 3. Detection Settings
         btn_detection_settings = QPushButton("⚙ Detection Settings")
         btn_detection_settings.setCursor(Qt.PointingHandCursor)
@@ -288,6 +314,10 @@ class VideoDetailDialog(QDialog):
         right_layout.addWidget(btn_toggle_tracking)
         right_layout.addWidget(lbl_tracking_info) # Add info label
         right_layout.addWidget(self.btn_toggle_heatmap) # Use self.
+        right_layout.addWidget(self.btn_toggle_fall_detection) # Fall detection toggle
+        right_layout.addWidget(lbl_fall_info) # Add fall detection info label
+        right_layout.addWidget(self.btn_toggle_pose) # Pose toggle
+        right_layout.addWidget(lbl_pose_info) # Add pose info label
         right_layout.addWidget(btn_detection_settings)
         right_layout.addStretch() 
 
@@ -346,6 +376,10 @@ class VideoDetailDialog(QDialog):
              else:
                  self.heatmap_active = False
                  self.update_heatmap_style()
+             
+             if hasattr(self.thread.detector, "pose_enabled"):
+                 self.pose_active = self.thread.detector.pose_enabled
+                 self.update_pose_style()
              
         # Case 2: Own Thread (New Source)
         elif self.source is not None:
@@ -630,3 +664,31 @@ class VideoDetailDialog(QDialog):
         self.update_heatmap_style()
         if self.thread:
             self.thread.set_heatmap(self.heatmap_active)
+
+    def update_fall_detection_style(self):
+        if self.fall_detection_active:
+            self.btn_toggle_fall_detection.setText("🚨 Fall Detection is ON")
+            self.btn_toggle_fall_detection.setStyleSheet("background-color: #fecaca; color: #991b1b; border: 1px solid #f87171; border-radius: 6px; padding: 10px; font-weight: bold;")
+        else:
+            self.btn_toggle_fall_detection.setText("🚨 Fall Detection is OFF")
+            self.btn_toggle_fall_detection.setStyleSheet("background-color: white; color: #64748b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-weight: bold;")
+
+    def toggle_fall_detection(self):
+        self.fall_detection_active = not self.fall_detection_active
+        self.update_fall_detection_style()
+        if self.thread:
+            self.thread.set_fall_detection(self.fall_detection_active)
+
+    def update_pose_style(self):
+        if self.pose_active:
+            self.btn_toggle_pose.setText("👤 17-Point Pose is ON")
+            self.btn_toggle_pose.setStyleSheet("background-color: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; border-radius: 6px; padding: 10px; font-weight: bold;")
+        else:
+            self.btn_toggle_pose.setText("👤 17-Point Pose is OFF")
+            self.btn_toggle_pose.setStyleSheet("background-color: white; color: #64748b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-weight: bold;")
+
+    def toggle_pose(self):
+        self.pose_active = not self.pose_active
+        self.update_pose_style()
+        if self.thread:
+            self.thread.set_pose_enabled(self.pose_active)

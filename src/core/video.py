@@ -35,6 +35,14 @@ class VideoThread(QThread):
         if self.detector:
             self.detector.set_heatmap(enabled)
 
+    def set_fall_detection(self, enabled):
+        if self.detector:
+            self.detector.set_fall_detection(enabled)
+
+    def set_pose_enabled(self, enabled):
+        if self.detector:
+            self.detector.set_pose_enabled(enabled)
+
     def get_yt_url(self, url):
         import yt_dlp
         ydl_opts = {'format': 'best', 'quiet': True}
