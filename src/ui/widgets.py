@@ -96,13 +96,15 @@ class VideoCard(QFrame):
         layout.addWidget(stats_container)
         layout.addWidget(self.lbl_status)
         layout.addWidget(self.btn_details)
-        
+
         self.thread = None
+        self.source = None  # Store video source path
 
     def start_video(self, source, location=None, video_id=None):
         if self.thread and self.thread.isRunning():
             self.thread.stop()
-            
+
+        self.source = source  # Save the source path
         self.thread = VideoThread(source, location_name=location, video_id=video_id)
         self.thread.frame_signal.connect(self.set_frame)
         self.thread.stats_signal.connect(self.update_stats)

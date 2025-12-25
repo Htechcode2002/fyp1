@@ -1,24 +1,24 @@
-from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                               QPushButton, QFrame, QTableWidget, QTableWidgetItem, 
-                               QHeaderView, QSizePolicy, QStackedLayout)
+from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+                               QPushButton, QFrame, QTableWidget, QTableWidgetItem,
+                               QHeaderView, QSizePolicy, QStackedLayout, QMessageBox)
 from PySide6.QtCore import Qt, QSize, QEvent
-from PySide6.QtGui import QIcon, QPixmap, QCursor
 from PySide6.QtGui import QIcon, QPixmap, QCursor
 from src.core.video import VideoThread
 from src.ui.widgets import OverlayWidget
 
 class VideoDetailDialog(QDialog):
-    def __init__(self, parent=None, video_title="New Video Source", video_source=None, thread=None):
+    def __init__(self, parent=None, video_title="New Video Source", video_source=None, thread=None, main_window=None):
         super().__init__(parent)
         self.setWindowTitle(video_title)
         self.resize(1100, 750)
         self.setStyleSheet("background-color: #f8fafc;")
         # Enable window maximize/minimize
         self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint)
-        
+
         self.source = video_source
         self.thread = thread
         self.is_own_thread = (thread is None) # If thread passed, we don't own it
+        self.main_window = main_window  # Store reference to MainWindow
         
         self.source_size = None # QSize of original video
         self.display_size = None # QSize of UI widget
@@ -287,6 +287,17 @@ class VideoDetailDialog(QDialog):
         self.btn_toggle_pose.clicked.connect(self.toggle_pose)
         self.update_pose_style()
 
+        # Gender & Age Detection Toggle
+        self.btn_toggle_face_analysis = QPushButton("👤 Gender & Age is OFF")
+        self.btn_toggle_face_analysis.setCursor(Qt.PointingHandCursor)
+        self.face_analysis_active = False
+
+        lbl_face_info = QLabel("Detects gender and age")
+        lbl_face_info.setStyleSheet("color: #64748b; font-size: 11px; margin-bottom: 10px;")
+
+        self.btn_toggle_face_analysis.clicked.connect(self.toggle_face_analysis)
+        self.update_face_analysis_style()
+
         # 3. Detection Settings
         btn_detection_settings = QPushButton("⚙ Detection Settings")
         btn_detection_settings.setCursor(Qt.PointingHandCursor)
@@ -305,6 +316,7 @@ class VideoDetailDialog(QDialog):
             }
         """)
         
+
         right_layout.addLayout(settings_header)
         right_layout.addWidget(lbl_drawing)
         right_layout.addWidget(btn_draw_line)
@@ -318,6 +330,8 @@ class VideoDetailDialog(QDialog):
         right_layout.addWidget(lbl_fall_info) # Add fall detection info label
         right_layout.addWidget(self.btn_toggle_pose) # Pose toggle
         right_layout.addWidget(lbl_pose_info) # Add pose info label
+        right_layout.addWidget(self.btn_toggle_face_analysis) # Face analysis toggle
+        right_layout.addWidget(lbl_face_info) # Add face analysis info label
         right_layout.addWidget(btn_detection_settings)
         right_layout.addStretch() 
 
@@ -358,11 +372,17 @@ class VideoDetailDialog(QDialog):
         # Case 1: Shared Thread (Already running)
         if self.thread is not None:
              # Connect signals
+             # Connect signals safely - disconnect any existing first to avoid double calls
+             # Using Python's duck typing to check if connected is complex in PySide6
+             # We just disconnect and ignore the warning/error if it wasn't connected
              try:
                 self.thread.frame_signal.disconnect(self.set_frame)
+             except (RuntimeError, TypeError):
+                pass
+             try:
                 self.thread.stats_signal.disconnect(self.update_stats)
-             except:
-                pass # Might not be connected yet
+             except (RuntimeError, TypeError):
+                pass
                 
              self.thread.frame_signal.connect(self.set_frame)
              self.thread.stats_signal.connect(self.update_stats)
@@ -394,69 +414,7 @@ class VideoDetailDialog(QDialog):
              
              self.thread.start()
 
-    def handle_line_drawn(self, line):
-        """
-        Called when a new line is drawn. Parameter 'line' is [start_point, end_point].
-        We need to add this to our existing lines and update the detector.
-        """
-        if not self.thread:
-            return
-
-        if not self.source_size or not self.display_img_size:
-            print("WARNING: Cannot map line - video dimensions not ready")
-            return
-
-        # Calculate Scale based on Rendered Image Size (not Widget Size)
-        scale_x = self.source_size.width() / self.display_img_size.width()
-        scale_y = self.source_size.height() / self.display_img_size.height()
-
-        # Offset (centering)
-        off_x = self.off_x
-        off_y = self.off_y
-
-        # Get ALL lines from overlay widget (including the one just drawn)
-        all_lines = []
-        for l in self.overlay_widget.lines:
-            # Map Click -> Relative to Image -> Scaled to Source
-            lx1 = max(0, l[0].x() - off_x)
-            ly1 = max(0, l[0].y() - off_y)
-            lx2 = max(0, l[1].x() - off_x)
-            ly2 = max(0, l[1].y() - off_y)
-
-            # Apply Scale
-            sx1 = int(lx1 * scale_x)
-            sy1 = int(ly1 * scale_y)
-            sx2 = int(lx2 * scale_x)
-            sy2 = int(ly2 * scale_y)
-
-            all_lines.append(((sx1, sy1), (sx2, sy2)))
-
-        self.thread.set_lines(all_lines)
-
-    def handle_zone_drawn(self, zone):
-        if self.thread and self.source_size and self.display_img_size:
-            scale_x = self.source_size.width() / self.display_img_size.width()
-            scale_y = self.source_size.height() / self.display_img_size.height()
-            
-            off_x = self.off_x
-            off_y = self.off_y
-            
-            zones = []
-            for z_points in self.overlay_widget.zones:
-                zone_poly = []
-                for p in z_points:
-                    px = max(0, p.x() - off_x)
-                    py = max(0, p.y() - off_y)
-                    zone_poly.append((int(px * scale_x), int(py * scale_y)))
-                zones.append(zone_poly)
-            self.thread.set_zones(zones)
-
-    def handle_clear_shapes(self):
-        self.overlay_widget.clear_shapes()
-        if self.thread:
-            # Clear logic in detector too
-            self.thread.set_lines([])
-            self.thread.set_zones([])
+    # Duplicate methods removed - consolidated below
             
     def set_frame(self, pixmap):
         # Store original size for scaling
@@ -641,13 +599,18 @@ class VideoDetailDialog(QDialog):
         if self.thread:
             try:
                 self.thread.frame_signal.disconnect(self.set_frame)
+            except (RuntimeError, TypeError):
+                pass
+            try:
                 self.thread.stats_signal.disconnect(self.update_stats)
-            except:
+            except (RuntimeError, TypeError):
                 pass
 
             # Only stop if we created it
             if self.is_own_thread:
                 self.thread.stop()
+                # Ensure the thread is finished before the dialog is destroyed
+                self.thread.wait()
                 
         event.accept()
 
@@ -692,3 +655,57 @@ class VideoDetailDialog(QDialog):
         self.update_pose_style()
         if self.thread:
             self.thread.set_pose_enabled(self.pose_active)
+
+    def toggle_face_analysis(self):
+        """Toggle gender and age detection"""
+        # Check if FaceAnalyzer is actually enabled/loaded
+        if not self.face_analysis_active: # If we are trying to TURN IT ON
+            if self.thread and hasattr(self.thread.detector, "face_analyzer"):
+                fa = self.thread.detector.face_analyzer
+                if not fa.enabled:
+                    msg = fa.error_message if hasattr(fa, "error_message") and fa.error_message else "Face Analysis model failed to load."
+                    QMessageBox.warning(self, "Face Analysis Unavailable", 
+                                        f"Cannot enable face analysis:\n\n{msg}\n\n"
+                                        "Please check your internet connection or download models manually.")
+                    return
+
+        self.face_analysis_active = not self.face_analysis_active
+        self.update_face_analysis_style()
+        if self.thread:
+            self.thread.set_face_analysis_enabled(self.face_analysis_active)
+
+    def update_face_analysis_style(self):
+        """Update gender and age detection button style"""
+        if self.face_analysis_active:
+            self.btn_toggle_face_analysis.setText("👤 Gender & Age is ON")
+            self.btn_toggle_face_analysis.setStyleSheet("""
+                QPushButton {
+                    background-color: #10b981;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 10px;
+                    font-weight: bold;
+                    margin-bottom: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #059669;
+                }
+            """)
+        else:
+            self.btn_toggle_face_analysis.setText("👤 Gender & Age is OFF")
+            self.btn_toggle_face_analysis.setStyleSheet("""
+                QPushButton {
+                    background-color: #6b7280;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 10px;
+                    font-weight: bold;
+                    margin-bottom: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #4b5563;
+                }
+            """)
+

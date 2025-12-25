@@ -3,15 +3,20 @@ import cv2
 import numpy as np
 from src.core.config_manager import ConfigManager
 from src.core.database import DatabaseManager
+from src.core.face_analyzer import FaceAnalyzer
 import os
 import time
 from datetime import datetime
 
 class VideoDetector:
-    def __init__(self, tracker="bytetrack.yaml", location_name=None, video_id=None):
+    def __init__(self, tracker="trackers/botsort_reid.yaml", location_name=None, video_id=None, camera_id=None, multi_cam_tracker=None):
         self.tracker = tracker
+        self.camera_id = camera_id if camera_id else "cam_0"  # For multi-camera tracking
         self.location_name = location_name if location_name else "Unknown Location"
         self.video_id = video_id
+        self.use_reid = True  # Enable ReID for cross-camera tracking
+        self.reid_features = {}  # Store ReID features for each track_id
+        self.multi_cam_tracker = multi_cam_tracker  # Shared cross-camera tracker instance
         self.db = DatabaseManager()
         self.heatmap_enabled = False
         self.heatmap_accumulator = None
@@ -20,6 +25,8 @@ class VideoDetector:
         self.fall_detections = {}  # Track fall detections: {box_id: {'start_time': time, 'box': [...], 'confirmed': False}}
         self.fall_threshold = 2.0  # 2 seconds threshold
         self.pose_enabled = False  # Toggle for visualizing 17-point pose
+        self.face_analysis_enabled = False  # Toggle for gender and age detection
+        self.face_analyzer = FaceAnalyzer()  # InsightFace analyzer
         self.model = None
         self.pose_model = None  # YOLO Pose model for better clothing detection
         self.use_pose_for_color = True  # Enable pose-based color detection
@@ -63,6 +70,10 @@ class VideoDetector:
 
     def set_pose_enabled(self, enabled):
         self.pose_enabled = enabled
+
+    def set_face_analysis_enabled(self, enabled):
+        """Enable/disable gender and age detection"""
+        self.face_analysis_enabled = enabled
 
     def set_fall_detection(self, enabled):
         self.fall_detection_enabled = enabled
@@ -431,27 +442,49 @@ class VideoDetector:
             # Predict only (Detection) - No IDs
             results = self.model.predict(frame, verbose=False, classes=[0, 24, 26], imgsz=imgsz)
 
-        # --- PERFORMANCE OPTIMIZATION: Single-pass Pose Inference ---
+        # --- POSE DETECTION: Only run when 17-Point Pose is enabled ---
         all_keypoints = []
-        needs_pose = self.pose_enabled
-        
-        # Quick check for new persons needing color
-        if not needs_pose and self.use_pose_for_color:
-            for result in results:
-                for box, track_id in zip(result.boxes, (result.boxes.id.int().tolist() if result.boxes.id is not None else [None]*len(result.boxes))):
-                    if track_id is None or track_id not in self.color_cache:
-                        needs_pose = True
-                        break
-                if needs_pose: break
 
-        if needs_pose and self.pose_model is not None:
-            # Use 480 for pose to balance speed/accuracy
-            pose_results = self.pose_model(frame, verbose=False, imgsz=480)
-            if len(pose_results) > 0 and pose_results[0].keypoints is not None:
-                all_keypoints = pose_results[0].keypoints.xy.cpu().numpy()
+        # Only run pose detection if the user has enabled it via the toggle
+        if self.pose_enabled and self.pose_model is not None:
+            # Run pose detection on individual person crops for better accuracy
+            # This works better for small/distant people
+            all_keypoints = []
+
+            # Collect all person boxes
+            person_boxes = []
+            for result in results:
+                for box in result.boxes:
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    person_boxes.append((x1, y1, x2, y2))
+
+            for x1, y1, x2, y2 in person_boxes:
+                # Crop person region with padding
+                pad = 10
+                px1 = max(0, int(x1) - pad)
+                py1 = max(0, int(y1) - pad)
+                px2 = min(frame.shape[1], int(x2) + pad)
+                py2 = min(frame.shape[0], int(y2) + pad)
+
+                person_crop = frame[py1:py2, px1:px2]
+                if person_crop.size > 0:
+                    # Run pose on crop - high resolution for accurate keypoints
+                    pose_results = self.pose_model(person_crop, verbose=False, imgsz=640)
+                    if len(pose_results) > 0 and pose_results[0].keypoints is not None:
+                        kps = pose_results[0].keypoints.xy.cpu().numpy()
+                        if len(kps) > 0:
+                            # Convert keypoints back to frame coordinates
+                            kps_frame = kps[0].copy()
+                            kps_frame[:, 0] += px1
+                            kps_frame[:, 1] += py1
+                            all_keypoints.append(kps_frame)
+
+            all_keypoints = np.array(all_keypoints) if len(all_keypoints) > 0 else np.array([])
             self.last_pose_results = all_keypoints
         else:
-            all_keypoints = self.last_pose_results
+            # Pose disabled - use empty array
+            all_keypoints = np.array([])
+            self.last_pose_results = all_keypoints
 
         # Track active IDs in this frame
         current_frame_ids = set()
@@ -693,11 +726,24 @@ class VideoDetector:
                 # --- COLOR DETECTION (Already done above) ---
                 # shirt_color and shirt_box are already set
 
+                # --- CROSS-CAMERA TRACKING ---
+                global_id = None
+                if self.multi_cam_tracker is not None and track_id is not None and cls_id == 0:
+                    # Update multi-camera tracker with this detection
+                    global_id = self.multi_cam_tracker.update(
+                        camera_id=self.camera_id,
+                        local_track_id=track_id,
+                        frame=frame,
+                        box=[x1, y1, x2, y2],
+                        color=shirt_color
+                    )
+
                 detections.append({
                     "box": [int(x1), int(y1), int(x2), int(y2)],
                     "conf": conf,
                     "id": int(track_id) if track_id is not None else None,
-                    "cls_id": int(cls_id), 
+                    "global_id": int(global_id) if global_id is not None else None,
+                    "cls_id": int(cls_id),
                     "loitering": is_loitering,
                     "dwell_time": dwell_time,
                     "direction_arrow": direction_arrow,
@@ -832,6 +878,49 @@ class VideoDetector:
             except Exception as e:
                 print(f"Fall detection error: {e}")
 
+        # --- FACE ANALYSIS: Gender and Age Detection ---
+        if self.face_analysis_enabled and self.face_analyzer.enabled:
+            try:
+                # Get person bounding boxes for filtering
+                person_boxes = [det['box'] for det in detections if det['cls_id'] == 0]
+
+                # Analyze faces
+                face_info = self.face_analyzer.analyze_faces(frame, person_boxes)
+
+                # Add face info to detections
+                for det in detections:
+                    if det['cls_id'] != 0:
+                        continue
+
+                    px1, py1, px2, py2 = det['box']
+                    person_center_x = (px1 + px2) / 2
+                    person_center_y = (py1 + py2) / 2
+
+                    # Find closest face to this person
+                    closest_face = None
+                    min_dist = float('inf')
+
+                    for face in face_info:
+                        fx1, fy1, fx2, fy2 = face['bbox']
+                        face_center_x = (fx1 + fx2) / 2
+                        face_center_y = (fy1 + fy2) / 2
+
+                        # Calculate distance between person and face centers
+                        dist = np.sqrt((person_center_x - face_center_x)**2 +
+                                      (person_center_y - face_center_y)**2)
+
+                        if dist < min_dist:
+                            min_dist = dist
+                            closest_face = face
+
+                    # If found a nearby face, add gender and age to detection
+                    if closest_face and min_dist < (px2 - px1):  # Face should be within person width
+                        det['gender'] = closest_face['gender']
+                        det['age'] = closest_face['age']
+
+            except Exception as e:
+                print(f"Face analysis error: {e}")
+
         # Add analytics to counts
         enhanced_counts = {}
         for k, v in current_counts.items():
@@ -875,15 +964,9 @@ class VideoDetector:
             if is_loitering:
                 color = (0, 0, 255)
 
-            # Determine head/avatar point position
+            # Determine head/avatar point position (using bounding box only for performance)
             dot_center = (int((x1 + x2) / 2), int(y1 + (y2 - y1) * 0.1))
-            
-            if cls_id == 0: # Person
-                kpts = det.get("keypoints")
-                if kpts and kpts[0] is not None:
-                    # Use Nose keypoint if available
-                    dot_center = (int(kpts[0][0]), int(kpts[0][1]))
-            
+
             # Draw Head Dot (White glow + Color center)
             cv2.circle(frame, dot_center, 7, (255, 255, 255), -1, cv2.LINE_AA)
             cv2.circle(frame, dot_center, 5, color, -1, cv2.LINE_AA)
@@ -914,12 +997,22 @@ class VideoDetector:
                 label_bg_color = (0, 0, 255) # Red Label
                 label = f"LOITERING {dwell_time:.1f}s"
             elif track_id is not None:
-                 label = f"ID: {track_id}"
+                 # Show global ID if available, otherwise local ID
+                 global_id = det.get("global_id")
+                 if global_id is not None:
+                     label = f"G{global_id} (L{track_id})"  # Global ID (Local ID)
+                 else:
+                     label = f"ID: {track_id}"
+
                  # Append Color Info if available
                  if det.get("shirt_color") and det["shirt_color"] != "Unknown":
                      s_c = det["shirt_color"]
-                     # e.g. "ID: 10 (Black)"
                      label += f" ({s_c})"
+
+                 # Append Gender and Age if available
+                 if "gender" in det and "age" in det:
+                     gender_short = "M" if det["gender"] == "Male" else "F"
+                     label += f" {gender_short}/{det['age']}y"
             
             if label:
                 # Draw Label with background
@@ -949,27 +1042,37 @@ class VideoDetector:
             # --- Draw Pose Keypoints ---
             if self.pose_enabled and det.get("keypoints") is not None:
                 kpts = det["keypoints"]
-                # Connections for COCO (17 points)
-                connections = [
-                    (0, 1), (0, 2), (1, 3), (2, 4), # Head
-                    (5, 6), (5, 7), (7, 9), (6, 8), (8, 10), # Shoulders & Arms
-                    (5, 11), (6, 12), (11, 12), # Torso
-                    (11, 13), (13, 15), (12, 14), (14, 16) # Legs
-                ]
-                
-                # Draw skeleton lines
-                for start_idx, end_idx in connections:
-                    if start_idx < len(kpts) and end_idx < len(kpts):
-                        pt1 = kpts[start_idx]
-                        pt2 = kpts[end_idx]
-                        if pt1 is not None and pt2 is not None:
-                            cv2.line(frame, (pt1[0], pt1[1]), (pt2[0], pt2[1]), (0, 255, 255), 2)
-                
-                # Draw keypoints
-                for i, pt in enumerate(kpts):
-                    if pt is not None:
-                        # Draw circle for keypoint
-                        cv2.circle(frame, (pt[0], pt[1]), 4, (0, 0, 255), -1)
+                if kpts and len(kpts) >= 17:  # Ensure we have valid keypoints
+                    # Connections for COCO (17 points)
+                    connections = [
+                        (0, 1), (0, 2), (1, 3), (2, 4), # Head
+                        (5, 6), (5, 7), (7, 9), (6, 8), (8, 10), # Shoulders & Arms
+                        (5, 11), (6, 12), (11, 12), # Torso
+                        (11, 13), (13, 15), (12, 14), (14, 16) # Legs
+                    ]
+
+                    # Draw skeleton lines
+                    for start_idx, end_idx in connections:
+                        if start_idx < len(kpts) and end_idx < len(kpts):
+                            pt1 = kpts[start_idx]
+                            pt2 = kpts[end_idx]
+                            if pt1 is not None and pt2 is not None:
+                                try:
+                                    cv2.line(frame, (int(pt1[0]), int(pt1[1])), (int(pt2[0]), int(pt2[1])), (0, 255, 255), 2)
+                                except:
+                                    pass  # Skip invalid points
+
+                    # Draw keypoints
+                    for i, pt in enumerate(kpts):
+                        if pt is not None:
+                            try:
+                                # Draw circle for keypoint
+                                cv2.circle(frame, (int(pt[0]), int(pt[1])), 4, (0, 0, 255), -1)
+                                # Optional: Draw keypoint number
+                                # cv2.putText(frame, str(i), (int(pt[0])+5, int(pt[1])-5),
+                                #             cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255, 255, 255), 1)
+                            except:
+                                pass  # Skip invalid points
             
         # --- HEATMAP OVERLAY ---
         if self.heatmap_enabled and self.heatmap_accumulator is not None:

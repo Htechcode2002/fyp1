@@ -43,6 +43,10 @@ class VideoThread(QThread):
         if self.detector:
             self.detector.set_pose_enabled(enabled)
 
+    def set_face_analysis_enabled(self, enabled):
+        if self.detector:
+            self.detector.set_face_analysis_enabled(enabled)
+
     def get_yt_url(self, url):
         import yt_dlp
         ydl_opts = {'format': 'best', 'quiet': True}

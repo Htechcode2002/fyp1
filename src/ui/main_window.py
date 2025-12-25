@@ -13,10 +13,13 @@ class MainWindow(QMainWindow):
         super().__init__()
         # Initialize Config Manager to load defaults
         ConfigManager()
-        
+
         self.setWindowTitle("Crowd Detection System")
         self.resize(1280, 850)
         self.setStyleSheet("background-color: #f8fafc;") # Light gray/blue bg
+
+        # Store all video cards for cross-camera tracking
+        self.video_cards = []
 
         # Main Layout
         central_widget = QWidget()
@@ -45,7 +48,7 @@ class MainWindow(QMainWindow):
 
         for btn in [self.btn_dashboard, self.btn_config]:
             btn.setStyleSheet("border: none; color: #64748b; font-weight: bold;")
-            
+
         header_layout.addWidget(lbl_logo)
         header_layout.addWidget(lbl_app_name)
         header_layout.addStretch()
@@ -58,12 +61,12 @@ class MainWindow(QMainWindow):
 
         # --- Stacked Widget for Pages ---
         self.stack = QStackedWidget()
-        
-        # Page 1: Dashboard
+
+        # Page 0: Dashboard
         dashboard_page = self.create_dashboard_page()
         self.stack.addWidget(dashboard_page)
 
-        # Page 2: Config
+        # Page 1: Config
         config_page = ConfigPage()
         self.stack.addWidget(config_page)
 
@@ -138,15 +141,22 @@ class MainWindow(QMainWindow):
 
     def refresh_dashboard(self):
         """Reload video sources from config and rebuild dashboard."""
-        # Clear existing cards
+        # Stop and join existing threads first
+        for card in self.video_cards:
+            card.stop_video()
+
+        # Clear existing cards from layout
         while self.cards_layout.count():
             child = self.cards_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
-        
+
+        # Clear video cards list
+        self.video_cards = []
+
         cm = ConfigManager()
         sources = cm.get("video_sources", [])
-        
+
         for src in sources:
             # Prioritize Location for the title if available, per user request
             name = src.get("name", "Unknown Source")
@@ -156,11 +166,14 @@ class MainWindow(QMainWindow):
             
             card = VideoCard(title=display_title)
             card.setFixedWidth(400)
-            
+
             # Use closure to capture the specific card for this source
             card.btn_details.clicked.connect(lambda _, c=card: self.open_details(c))
             self.cards_layout.addWidget(card)
-            
+
+            # Add to video cards list
+            self.video_cards.append(card)
+
             # Start Video
             path = src.get("path", "")
             if path:
@@ -189,6 +202,14 @@ class MainWindow(QMainWindow):
         """Open the detailed view dialog using the existing thread from the card."""
         title = card.lbl_title.text()
         existing_thread = card.thread
-        
-        dialog = VideoDetailDialog(self, video_title=title, thread=existing_thread)
+        video_source = card.source  # Get the video source path from the card
+
+        # Pass self (MainWindow) so DetailsView can access all video cards
+        dialog = VideoDetailDialog(self, video_title=title, video_source=video_source, thread=existing_thread, main_window=self)
         dialog.exec()
+
+    def closeEvent(self, event):
+        """Ensure all threads are stopped when window is closed."""
+        for card in self.video_cards:
+            card.stop_video()
+        event.accept()

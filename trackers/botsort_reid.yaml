@@ -1,0 +1,19 @@
+# BoT-SORT with ReID enabled for cross-camera tracking
+# Custom configuration for multi-camera person re-identification
+
+tracker_type: botsort
+track_high_thresh: 0.3  # Higher threshold for more confident tracks
+track_low_thresh: 0.1
+new_track_thresh: 0.3
+track_buffer: 60  # Keep lost tracks longer for re-identification
+match_thresh: 0.7  # Slightly lower for better recovery
+fuse_score: True
+
+# BoT-SORT specifics
+gmc_method: sparseOptFlow  # Global motion compensation
+
+# ReID model settings - ENABLED
+with_reid: True  # Enable ReID model use
+proximity_thresh: 0.5  # IoU threshold for considering tracks proximate
+appearance_thresh: 0.25  # Lower threshold for cross-camera matching
+model: auto  # Use detector's built-in features

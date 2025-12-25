@@ -13,6 +13,8 @@ class DatabaseManager:
             cls._instance = super(DatabaseManager, cls).__new__(cls)
             cls._instance.connection = None
             cls._instance.config = ConfigManager().get("db")
+            cls._instance.last_error_time = 0
+            cls._instance.error_throttle_seconds = 60 # Only print same error every 60s
             
             # Async Worker Setup
             cls._instance.queue = queue.Queue()
@@ -45,7 +47,10 @@ class DatabaseManager:
                 # print("Successfully connected to the database")
                 return self.connection
         except Error as e:
-            print(f"Error connecting to database: {e}")
+            current_time = time.time()
+            if current_time - self.last_error_time > self.error_throttle_seconds:
+                print(f"Error connecting to database: {e}")
+                self.last_error_time = current_time
             return None
 
     def _process_queue(self):
