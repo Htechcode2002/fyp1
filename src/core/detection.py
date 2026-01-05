@@ -55,7 +55,7 @@ class VideoDetector:
 
         # Optimization: Frame Skipping & Frequency
         self.frame_count = 0
-        self.inference_freq = 2 # Run inference every 2 frames (Skip every other frame to save GPU)
+        self.inference_freq = 1 # Run inference every frame (No skipping - consistent detection across all GPUs)
         self.heatmap_update_freq = 5 # Update heatmap overlay every 5 frames
         self.cached_heatmap_overlay = None
         self.face_analysis_freq = 10 # Run face analysis every 10 frames (CRITICAL: reduces blocking)
@@ -629,15 +629,17 @@ class VideoDetector:
         
         # Performance optimization: fixed size
         imgsz = 640
+        # Lower confidence threshold to reduce GPU floating-point precision differences
+        conf_threshold = 0.15  # Default is 0.25, lowering to catch edge cases
         
         if tracking_enabled:
             # Persist=True for tracking
             # Classes: 0=Person, 24=Backpack, 26=Handbag
             # print(f"[DEBUG] Running track... {self.frame_count}")
-            results = self.model.track(frame, persist=True, verbose=False, classes=[0, 24, 26], tracker=self.tracker, imgsz=imgsz)
+            results = self.model.track(frame, persist=True, verbose=False, classes=[0, 24, 26], tracker=self.tracker, imgsz=imgsz, conf=conf_threshold)
         else:
             # Predict only (Detection) - No IDs
-            results = self.model.predict(frame, verbose=False, classes=[0, 24, 26], imgsz=imgsz)
+            results = self.model.predict(frame, verbose=False, classes=[0, 24, 26], imgsz=imgsz, conf=conf_threshold)
 
         # Run pose detection for people who don't have cached keypoints yet
         # This helps with accurate clothing region detection
