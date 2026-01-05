@@ -7,7 +7,7 @@
         "database": "test"
     },
     "yolo": {
-        "model_path": "models\\yolo12n.pt"
+        "model_path": "models\\yolov8n.pt"
     },
     "thresholds": {
         "warning": 20,
@@ -15,20 +15,14 @@
     },
     "video_sources": [
         {
-            "id": "735f2eda",
-            "name": "Source 735f2eda",
+            "id": "a1ea42a2",
+            "name": "Source a1ea42a2",
             "location": "",
             "type": "file",
-            "path": "C:/Users/Charles/Downloads/853889-hd_1920_1080_25fps.mp4",
-            "danger_threshold": 100
-        },
-        {
-            "id": "8e204f39",
-            "name": "Source 8e204f39",
-            "location": "",
-            "type": "file",
-            "path": "C:/Users/Charles/Downloads/9f1dd420ddd7460da938a00e417f7bc9.mp4",
-            "danger_threshold": 100
+            "path": "C:/Users/Charles/Desktop/common tools/ytdowload/downloads/Royalty Free Footage City Pedestrians \uff5c 4K Stock Video Footage_\u65e0\u58f0.mp4",
+            "danger_threshold": 100,
+            "loitering_threshold": 5,
+            "fall_threshold": 2
         }
     ]
 }

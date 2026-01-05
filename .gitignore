@@ -11,12 +11,22 @@ env/
 # IDE settings
 .vscode/
 .idea/
+.claude/
 
-# Models (Large files)
+# Models (Large files - download separately)
 models/
 *.pt
 *.pth
 *.onnx
+
+# Cache
+.cache/
+
+# Runtime generated files
+screenshots/
+debug_log.txt
+progression.txt
+run
 
 # Database & Logs
 *.log
@@ -29,3 +39,9 @@ models/
 # OS
 .DS_Store
 Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# InsightFace model cache
+~/.insightface/

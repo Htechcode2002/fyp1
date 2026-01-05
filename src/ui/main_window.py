@@ -1,11 +1,10 @@
-from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QFrame, QScrollArea, QStackedWidget, QSpacerItem, QSizePolicy)
 from PySide6.QtCore import Qt
-from src.ui.widgets import VideoCard, AnalysisTable
-from src.ui.chart_widget import LineChartWidget
-from src.ui.chat_widget import AIChatWidget
+from src.ui.widgets import VideoCard
 from src.ui.details_view import VideoDetailDialog
 from src.ui.config_page import ConfigPage
+from src.ui.data_view_page import DataViewPage
 from src.core.config_manager import ConfigManager
 
 class MainWindow(QMainWindow):
@@ -40,19 +39,24 @@ class MainWindow(QMainWindow):
         lbl_app_name.setStyleSheet("font-weight: bold; font-size: 16px; color: #333;")
         
         self.btn_dashboard = QPushButton("Dashboard")
+        self.btn_data = QPushButton("Database")
         self.btn_config = QPushButton("Config")
         self.btn_dashboard.setCursor(Qt.PointingHandCursor)
+        self.btn_data.setCursor(Qt.PointingHandCursor)
         self.btn_config.setCursor(Qt.PointingHandCursor)
         self.btn_dashboard.clicked.connect(lambda: self.switch_page(0))
-        self.btn_config.clicked.connect(lambda: self.switch_page(1))
+        self.btn_data.clicked.connect(lambda: self.switch_page(1))
+        self.btn_config.clicked.connect(lambda: self.switch_page(2))
 
-        for btn in [self.btn_dashboard, self.btn_config]:
+        for btn in [self.btn_dashboard, self.btn_data, self.btn_config]:
             btn.setStyleSheet("border: none; color: #64748b; font-weight: bold;")
 
         header_layout.addWidget(lbl_logo)
         header_layout.addWidget(lbl_app_name)
         header_layout.addStretch()
         header_layout.addWidget(self.btn_dashboard)
+        header_layout.addSpacing(10)
+        header_layout.addWidget(self.btn_data)
         header_layout.addSpacing(10)
         header_layout.addWidget(self.btn_config)
         header_layout.setContentsMargins(20, 0, 20, 0)
@@ -66,7 +70,11 @@ class MainWindow(QMainWindow):
         dashboard_page = self.create_dashboard_page()
         self.stack.addWidget(dashboard_page)
 
-        # Page 1: Config
+        # Page 1: Database Viewer
+        data_page = DataViewPage()
+        self.stack.addWidget(data_page)
+
+        # Page 2: Config
         config_page = ConfigPage()
         self.stack.addWidget(config_page)
 
@@ -95,13 +103,10 @@ class MainWindow(QMainWindow):
         lbl_dash_title.setStyleSheet("font-size: 24px; font-weight: bold; color: #1e293b;")
         
         
-        btn_refresh = QPushButton("Refresh")
-        btn_refresh.setCursor(Qt.PointingHandCursor)
-        btn_refresh.setStyleSheet("background-color: #3b82f6; color: white; border-radius: 6px; padding: 8px 16px; font-weight: bold;")
+        # Refresh button removed - no longer needed
         
         title_layout.addWidget(lbl_dash_title)
         title_layout.addStretch()
-        title_layout.addWidget(btn_refresh)
         
         # Subtitle
         lbl_subtitle = QLabel("1 video source available")
@@ -118,22 +123,6 @@ class MainWindow(QMainWindow):
         
         content_layout.addWidget(self.cards_container)
 
-        content_layout.addWidget(self.cards_container)
-        
-        # Line Chart
-        self.chart = LineChartWidget()
-        content_layout.addWidget(self.chart)
-
-        # Analysis Table
-        self.analysis_table = AnalysisTable()
-        self.analysis_table.add_row("Webcam 01", 25, "WARNING", "STOPPED", "2:53:46 AM")
-        
-        content_layout.addWidget(self.analysis_table)
-        
-        # AI Chat
-        self.ai_chat = AIChatWidget()
-        content_layout.addWidget(self.ai_chat)
-        
         content_layout.addStretch()
 
         scroll_area.setWidget(content_widget)
@@ -176,26 +165,35 @@ class MainWindow(QMainWindow):
 
             # Start Video
             path = src.get("path", "")
+            danger_threshold = src.get("danger_threshold", 100)  # Get danger threshold from config
+            loitering_threshold = src.get("loitering_threshold", 5.0)  # Get loitering threshold from config
+            fall_threshold = src.get("fall_threshold", 2.0)  # Get fall threshold from config
             if path:
                 # Basic check: if path is integer string (0, 1) treat as webcam index
                 if path.isdigit():
-                    card.start_video(int(path), location=location, video_id=video_id)
+                    card.start_video(int(path), location=location, video_id=video_id, danger_threshold=danger_threshold, loitering_threshold=loitering_threshold, fall_threshold=fall_threshold)
                 else:
-                    card.start_video(path, location=location, video_id=video_id)
+                    card.start_video(path, location=location, video_id=video_id, danger_threshold=danger_threshold, loitering_threshold=loitering_threshold, fall_threshold=fall_threshold)
             
     def switch_page(self, index):
         self.stack.setCurrentIndex(index)
-        
+
         # Refresh if switching to dashboard
         if index == 0:
             self.refresh_dashboard()
 
         # Simple active state styling
+        # Reset all buttons
+        self.btn_dashboard.setStyleSheet("border: none; color: #64748b; font-weight: bold;")
+        self.btn_data.setStyleSheet("border: none; color: #64748b; font-weight: bold;")
+        self.btn_config.setStyleSheet("border: none; color: #64748b; font-weight: bold;")
+
+        # Highlight active button
         if index == 0:
             self.btn_dashboard.setStyleSheet("border: none; color: #3b82f6; font-weight: bold;")
-            self.btn_config.setStyleSheet("border: none; color: #64748b; font-weight: bold;")
+        elif index == 1:
+            self.btn_data.setStyleSheet("border: none; color: #3b82f6; font-weight: bold;")
         else:
-            self.btn_dashboard.setStyleSheet("border: none; color: #64748b; font-weight: bold;")
             self.btn_config.setStyleSheet("border: none; color: #3b82f6; font-weight: bold;")
 
     def open_details(self, card):

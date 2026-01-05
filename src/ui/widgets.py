@@ -40,13 +40,6 @@ class VideoCard(QFrame):
             QPushButton:hover {
                 background-color: #2563eb;
             }
-            QLabel#WarningPill {
-                background-color: #fef08a;
-                color: #854d0e;
-                border-radius: 12px;
-                padding: 4px 12px;
-                font-weight: bold;
-            }
         """)
         
         layout = QVBoxLayout(self)
@@ -81,11 +74,7 @@ class VideoCard(QFrame):
         stats_layout.addWidget(self.lbl_count)
         stats_layout.addWidget(lbl_subtitle)
 
-        # Warning Pill
-        self.lbl_status = QLabel("⚠️ WARNING")
-        self.lbl_status.setAlignment(Qt.AlignCenter)
-        self.lbl_status.setObjectName("WarningPill")
-        self.lbl_status.setFixedHeight(30)
+        # Warning Pill removed - no longer needed
 
         # Button
         self.btn_details = QPushButton("View Details")
@@ -94,18 +83,18 @@ class VideoCard(QFrame):
         layout.addWidget(self.video_label)
         layout.addWidget(self.lbl_title)
         layout.addWidget(stats_container)
-        layout.addWidget(self.lbl_status)
+        # layout.addWidget(self.lbl_status)  # Removed WARNING label
         layout.addWidget(self.btn_details)
 
         self.thread = None
         self.source = None  # Store video source path
 
-    def start_video(self, source, location=None, video_id=None):
+    def start_video(self, source, location=None, video_id=None, danger_threshold=100, loitering_threshold=5.0, fall_threshold=2.0):
         if self.thread and self.thread.isRunning():
             self.thread.stop()
 
         self.source = source  # Save the source path
-        self.thread = VideoThread(source, location_name=location, video_id=video_id)
+        self.thread = VideoThread(source, location_name=location, video_id=video_id, danger_threshold=danger_threshold, loitering_threshold=loitering_threshold, fall_threshold=fall_threshold)
         self.thread.frame_signal.connect(self.set_frame)
         self.thread.stats_signal.connect(self.update_stats)
         self.thread.start()

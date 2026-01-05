@@ -4,6 +4,7 @@ from src.core.config_manager import ConfigManager
 import threading
 import queue
 import time
+from datetime import datetime
 
 class DatabaseManager:
     _instance = None
@@ -66,8 +67,8 @@ class DatabaseManager:
                     try:
                         cursor = conn.cursor()
                         query = """
-                        INSERT INTO crossing_events (video_id, location, line_name, count_left, count_right, clothing_color)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        INSERT INTO crossing_events (video_id, location, line_name, count_left, count_right, clothing_color, gender, age, mask_status, timestamp)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """
                         cursor.execute(query, event_data)
                         conn.commit()
@@ -100,19 +101,40 @@ class DatabaseManager:
                 count_left INT DEFAULT 0,
                 count_right INT DEFAULT 0,
                 clothing_color VARCHAR(255),
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                gender VARCHAR(50),
+                age VARCHAR(50),
+                mask_status VARCHAR(50),
+                timestamp DATETIME
             )
             """
             cursor.execute(query)
             conn.commit()
 
-            # Check for video_id column and add if missing
-            cursor.execute("SHOW COLUMNS FROM crossing_events LIKE 'video_id'")
+            # Check for gender and age columns and add if missing
+            cursor.execute("SHOW COLUMNS FROM crossing_events LIKE 'gender'")
             if cursor.fetchone() is None:
-                print("Adding missing 'video_id' column...")
-                cursor.execute("ALTER TABLE crossing_events ADD COLUMN video_id VARCHAR(255) AFTER id")
+                print("Adding missing 'gender' column...")
+                cursor.execute("ALTER TABLE crossing_events ADD COLUMN gender VARCHAR(50) AFTER clothing_color")
                 conn.commit()
-                
+
+            cursor.execute("SHOW COLUMNS FROM crossing_events LIKE 'age'")
+            col_info = cursor.fetchone()
+            if col_info is None:
+                print("Adding missing 'age' column...")
+                cursor.execute("ALTER TABLE crossing_events ADD COLUMN age VARCHAR(50) AFTER gender")
+                conn.commit()
+            elif "int" in col_info[1].lower():
+                print("Converting 'age' column from INT to VARCHAR(50)...")
+                cursor.execute("ALTER TABLE crossing_events MODIFY COLUMN age VARCHAR(50)")
+                conn.commit()
+
+            # Check for mask_status column and add if missing
+            cursor.execute("SHOW COLUMNS FROM crossing_events LIKE 'mask_status'")
+            if cursor.fetchone() is None:
+                print("Adding missing 'mask_status' column...")
+                cursor.execute("ALTER TABLE crossing_events ADD COLUMN mask_status VARCHAR(50) AFTER age")
+                conn.commit()
+
             print("Table 'crossing_events' check/creation successful.")
         except Error as e:
             print(f"Error creating table: {e}")
@@ -120,10 +142,12 @@ class DatabaseManager:
             if conn and conn.is_connected():
                 cursor.close()
 
-    def insert_event(self, video_id, location, line_name, count_left, count_right, clothing_color):
+    def insert_event(self, video_id, location, line_name, count_left, count_right, clothing_color, gender=None, age=None, mask_status=None):
         """Queue a crossing event for insertion."""
+        # Use local PC time instead of database server time
+        local_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         # Non-blocking put
-        self.queue.put((video_id, location, line_name, count_left, count_right, clothing_color))
+        self.queue.put((video_id, location, line_name, count_left, count_right, clothing_color, gender, age, mask_status, local_timestamp))
 
     def get_analytics_data(self, hours=1, interval='minute'):
         """
@@ -160,6 +184,71 @@ class DatabaseManager:
         except Error as e:
             print(f"Analytics Query Error: {e}")
             return []
+
+    def delete_event(self, event_id):
+        """Delete a single event by ID"""
+        conn = self.connect()
+        if not conn:
+            return False
+
+        try:
+            cursor = conn.cursor()
+            query = "DELETE FROM crossing_events WHERE id = %s"
+            cursor.execute(query, (event_id,))
+            conn.commit()
+            cursor.close()
+            return True
+        except Error as e:
+            print(f"Delete Error: {e}")
+            return False
+
+    def delete_events_by_filter(self, filters):
+        """Delete multiple events based on filters"""
+        conn = self.connect()
+        if not conn:
+            return False
+
+        try:
+            cursor = conn.cursor()
+            query = "DELETE FROM crossing_events WHERE 1=1"
+            params = []
+
+            # DateTime range filter
+            if filters.get('start_datetime'):
+                query += " AND timestamp >= %s"
+                params.append(filters['start_datetime'])
+            if filters.get('end_datetime'):
+                query += " AND timestamp <= %s"
+                params.append(filters['end_datetime'])
+
+            # Video ID filter
+            if filters.get('video_id'):
+                query += " AND video_id = %s"
+                params.append(filters['video_id'])
+
+            # Gender filter
+            if filters.get('gender') and filters['gender'] != 'All':
+                query += " AND gender = %s"
+                params.append(filters['gender'])
+
+            # Color filter
+            if filters.get('color') and filters['color'] != 'All':
+                query += " AND clothing_color = %s"
+                params.append(filters['color'])
+
+            # Mask filter
+            if filters.get('mask') and filters['mask'] != 'All':
+                query += " AND mask_status = %s"
+                params.append(filters['mask'])
+
+            cursor.execute(query, params)
+            deleted_count = cursor.rowcount
+            conn.commit()
+            cursor.close()
+            return deleted_count
+        except Error as e:
+            print(f"Bulk Delete Error: {e}")
+            return False
 
     def execute_safe_query(self, sql):
         """

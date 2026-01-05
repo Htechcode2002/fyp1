@@ -1,9 +1,10 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QLabel, QFrame,
                                QScrollArea, QFormLayout, QLineEdit, QCheckBox, QHBoxLayout,
                                QSizePolicy, QRadioButton, QButtonGroup, QFileDialog, QGraphicsDropShadowEffect, QComboBox, QSpinBox)
-from PySide6.QtGui import QAction, QIcon, QPixmap, QDesktopServices, QIntValidator, QColor, QCursor, QPainter, QLinearGradient, QBrush, QPen, QFont
-from PySide6.QtGui import QAction, QIcon, QPixmap, QDesktopServices, QIntValidator, QColor, QCursor, QPainter, QLinearGradient, QBrush, QPen, QFont
-from PySide6.QtCore import Qt, QSize, QUrl, QPropertyAnimation, QEasingCurve, QPoint
+from PySide6.QtGui import (QAction, QIcon, QPixmap, QDesktopServices, QIntValidator, 
+                           QColor, QCursor, QPainter, QLinearGradient, QBrush, 
+                           QPen, QFont)
+from PySide6.QtCore import Qt, QSize, QUrl, QPropertyAnimation, QEasingCurve, QPoint, QTimer
 from src.core.config_manager import ConfigManager
 import os
 import uuid # For generating unique IDs
@@ -257,7 +258,7 @@ class VideoSourceCard(QFrame):
         danger_layout = QHBoxLayout()
         lbl_danger = QLabel("⚠️ Danger Threshold:")
         lbl_danger.setStyleSheet("color: #d97706; font-weight: 600; font-size: 13px;")
-        
+
         self.inp_danger = QLineEdit(str(self.source_data.get("danger_threshold", 100)))
         self.inp_danger.setPlaceholderText("Count")
         self.inp_danger.setValidator(QIntValidator(0, 9999))
@@ -270,17 +271,73 @@ class VideoSourceCard(QFrame):
             }
             QLineEdit:focus { border: 1px solid #d97706; }
         """)
-        
+
         lbl_people = QLabel("people max")
         lbl_people.setStyleSheet("color: #64748b; font-size: 12px;")
-        
+
         danger_layout.addWidget(lbl_danger)
         danger_layout.addWidget(self.inp_danger)
         danger_layout.addWidget(lbl_people)
         danger_layout.addStretch()
-        
+
         layout.addLayout(danger_layout)
-        
+
+        # Loitering Threshold Input
+        loitering_layout = QHBoxLayout()
+        lbl_loitering = QLabel("⏱️ Loitering Threshold:")
+        lbl_loitering.setStyleSheet("color: #7c3aed; font-weight: 600; font-size: 13px;")
+
+        self.inp_loitering = QLineEdit(str(self.source_data.get("loitering_threshold", 5)))
+        self.inp_loitering.setPlaceholderText("Seconds")
+        self.inp_loitering.setValidator(QIntValidator(1, 300))
+        self.inp_loitering.setFixedWidth(100)
+        self.inp_loitering.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.inp_loitering.setStyleSheet("""
+            QLineEdit {
+                border: 1px solid #a78bfa; border-radius: 6px; padding: 6px;
+                background-color: #f5f3ff; color: #5b21b6; font-weight: bold;
+            }
+            QLineEdit:focus { border: 1px solid #7c3aed; }
+        """)
+
+        lbl_seconds = QLabel("seconds (dwell time)")
+        lbl_seconds.setStyleSheet("color: #64748b; font-size: 12px;")
+
+        loitering_layout.addWidget(lbl_loitering)
+        loitering_layout.addWidget(self.inp_loitering)
+        loitering_layout.addWidget(lbl_seconds)
+        loitering_layout.addStretch()
+
+        layout.addLayout(loitering_layout)
+
+        # Fall Detection Threshold Input
+        fall_layout = QHBoxLayout()
+        lbl_fall = QLabel("🚨 Fall Detection Threshold:")
+        lbl_fall.setStyleSheet("color: #dc2626; font-weight: 600; font-size: 13px;")
+
+        self.inp_fall = QLineEdit(str(self.source_data.get("fall_threshold", 2)))
+        self.inp_fall.setPlaceholderText("Seconds")
+        self.inp_fall.setValidator(QIntValidator(1, 10))
+        self.inp_fall.setFixedWidth(100)
+        self.inp_fall.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.inp_fall.setStyleSheet("""
+            QLineEdit {
+                border: 1px solid #f87171; border-radius: 6px; padding: 6px;
+                background-color: #fef2f2; color: #991b1b; font-weight: bold;
+            }
+            QLineEdit:focus { border: 1px solid #dc2626; }
+        """)
+
+        lbl_fall_seconds = QLabel("seconds (down time)")
+        lbl_fall_seconds.setStyleSheet("color: #64748b; font-size: 12px;")
+
+        fall_layout.addWidget(lbl_fall)
+        fall_layout.addWidget(self.inp_fall)
+        fall_layout.addWidget(lbl_fall_seconds)
+        fall_layout.addStretch()
+
+        layout.addLayout(fall_layout)
+
         # Save Button
         btn_save = QPushButton("Save Changes")
         btn_save.setCursor(Qt.PointingHandCursor)
@@ -298,6 +355,20 @@ class VideoSourceCard(QFrame):
         """)
         btn_save.clicked.connect(self.save)
         layout.addWidget(btn_save)
+
+        # Status message label (initially hidden)
+        self.lbl_save_status = QLabel("")
+        self.lbl_save_status.setAlignment(Qt.AlignCenter)
+        self.lbl_save_status.setStyleSheet("""
+            QLabel {
+                padding: 10px;
+                border-radius: 6px;
+                font-weight: bold;
+                margin-top: 5px;
+            }
+        """)
+        self.lbl_save_status.hide()
+        layout.addWidget(self.lbl_save_status)
 
         # Set initial state
         source_type = self.source_data.get("type", "url")
@@ -332,39 +403,113 @@ class VideoSourceCard(QFrame):
 
     def save(self):
         try:
+            # Validate danger threshold
             val = int(self.inp_danger.text())
-        except ValueError:
-            val = 100 # Default value if conversion fails
+            if val < 0:
+                raise ValueError("Danger threshold cannot be negative")
+        except ValueError as e:
+            # Show error message
+            self.show_status_message(f"❌ Error: Invalid danger threshold", success=False)
+            return
 
-        self.source_data["id"] = self.source_id # Ensure ID is saved
-        self.source_data["name"] = self.inp_location.text() or f"Source {self.source_id}" # Use location or default ID
-        self.source_data["location"] = self.inp_location.text()
-        self.source_data["danger_threshold"] = val
+        try:
+            # Validate loitering threshold
+            loitering_val = int(self.inp_loitering.text())
+            if loitering_val < 1:
+                raise ValueError("Loitering threshold must be at least 1 second")
+        except ValueError as e:
+            # Show error message
+            self.show_status_message(f"❌ Error: Invalid loitering threshold", success=False)
+            return
 
-        type_str = "url"
-        path_val = self.inp_path.text()
+        try:
+            # Validate fall threshold
+            fall_val = int(self.inp_fall.text())
+            if fall_val < 1:
+                raise ValueError("Fall threshold must be at least 1 second")
+        except ValueError as e:
+            # Show error message
+            self.show_status_message(f"❌ Error: Invalid fall threshold", success=False)
+            return
 
-        if self.rb_camera.isChecked():
-            type_str = "camera"
-            # Save camera index as path
-            path_val = str(self.camera_selector.currentData())
-        elif self.rb_file.isChecked():
-            type_str = "file"
-            
-        self.source_data["type"] = type_str
-        self.source_data["path"] = path_val
+        try:
+            self.source_data["id"] = self.source_id # Ensure ID is saved
+            self.source_data["name"] = self.inp_location.text() or f"Source {self.source_id}" # Use location or default ID
+            self.source_data["location"] = self.inp_location.text()
+            self.source_data["danger_threshold"] = val
+            self.source_data["loitering_threshold"] = loitering_val
+            self.source_data["fall_threshold"] = fall_val
 
-        # Animation for feedback
-        anim = QPropertyAnimation(self, b"pos")
-        anim.setDuration(100)
-        anim.setStartValue(self.pos())
-        anim.setEndValue(self.pos() + QPoint(0, 5))
-        anim.setEasingCurve(QEasingCurve.Type.OutBounce)
-        anim.start()
+            type_str = "url"
+            path_val = self.inp_path.text()
 
-        # Persist to disk
-        ConfigManager().save_config()
-        print(f"Saved source {self.source_id}: {self.source_data}")
+            if self.rb_camera.isChecked():
+                type_str = "camera"
+                # Save camera index as path
+                path_val = str(self.camera_selector.currentData())
+            elif self.rb_file.isChecked():
+                type_str = "file"
+
+            self.source_data["type"] = type_str
+            self.source_data["path"] = path_val
+
+            # Animation for feedback
+            anim = QPropertyAnimation(self, b"pos")
+            anim.setDuration(100)
+            anim.setStartValue(self.pos())
+            anim.setEndValue(self.pos() + QPoint(0, 5))
+            anim.setEasingCurve(QEasingCurve.Type.OutBounce)
+            anim.start()
+
+            # Persist to disk
+            ConfigManager().save_config()
+            print(f"Saved source {self.source_id}: {self.source_data}")
+
+            # Show success message
+            location_name = self.inp_location.text() or f"Source {self.source_id}"
+            self.show_status_message(f"✅ Successfully saved: {location_name}", success=True)
+
+        except Exception as e:
+            # Show error message if something goes wrong
+            self.show_status_message(f"❌ Failed to save: {str(e)}", success=False)
+            print(f"Error saving config: {e}")
+
+    def show_status_message(self, message, success=True):
+        """Display a temporary status message to the user."""
+        self.lbl_save_status.setText(message)
+
+        if success:
+            # Green background for success
+            self.lbl_save_status.setStyleSheet("""
+                QLabel {
+                    background-color: #dcfce7;
+                    color: #166534;
+                    border: 1px solid #86efac;
+                    padding: 10px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    margin-top: 5px;
+                }
+            """)
+        else:
+            # Red background for error
+            self.lbl_save_status.setStyleSheet("""
+                QLabel {
+                    background-color: #fee2e2;
+                    color: #991b1b;
+                    border: 1px solid #fca5a5;
+                    padding: 10px;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    margin-top: 5px;
+                }
+            """)
+
+        # Show the label
+        self.lbl_save_status.show()
+
+        # Auto-hide after 3 seconds
+        QTimer.singleShot(3000, self.lbl_save_status.hide)
 
     def get_data(self):
         try:
@@ -390,7 +535,6 @@ class VideoSourceCard(QFrame):
             "danger_threshold": val
         }
 
-from PySide6.QtGui import QPainter, QLinearGradient, QBrush, QPen, QFont
 
 class ColorRangeVisualizer(QWidget):
     def __init__(self, parent=None):

@@ -210,10 +210,34 @@ class VideoDetailDialog(QDialog):
         def update_detection_style():
             if self.detection_active:
                 btn_toggle_detection.setText("✅ Detection is ON")
-                btn_toggle_detection.setStyleSheet("background-color: #dcfce7; color: #166534; border: 1px solid #86efac; border-radius: 6px; padding: 10px; font-weight: bold;")
+                btn_toggle_detection.setStyleSheet("""
+                    QPushButton {
+                        background-color: #10b981;
+                        color: white;
+                        border: none;
+                        border-radius: 6px;
+                        padding: 10px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: #059669;
+                    }
+                """)
             else:
                 btn_toggle_detection.setText("🛑 Detection is OFF")
-                btn_toggle_detection.setStyleSheet("background-color: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; border-radius: 6px; padding: 10px; font-weight: bold;")
+                btn_toggle_detection.setStyleSheet("""
+                    QPushButton {
+                        background-color: #6b7280;
+                        color: white;
+                        border: none;
+                        border-radius: 6px;
+                        padding: 10px;
+                        font-weight: bold;
+                    }
+                    QPushButton:hover {
+                        background-color: #4b5563;
+                    }
+                """)
 
         def toggle_detection():
             self.detection_active = not self.detection_active
@@ -224,33 +248,6 @@ class VideoDetailDialog(QDialog):
         btn_toggle_detection.clicked.connect(toggle_detection)
         update_detection_style() # Set initial style without flipping
 
-        # --- Toggle Tracking (Counting/IDs) ---
-        btn_toggle_tracking = QPushButton("✅ Counting is ON")
-        btn_toggle_tracking.setCheckable(True)
-        btn_toggle_tracking.setChecked(True)
-        btn_toggle_tracking.setCursor(Qt.PointingHandCursor)
-        self.tracking_active = True
-        
-        lbl_tracking_info = QLabel("Controls BoT-SORT tracking algorithm")
-        lbl_tracking_info.setStyleSheet("color: #64748b; font-size: 11px; margin-bottom: 10px;")
-
-        def update_tracking_style():
-             if self.tracking_active:
-                 btn_toggle_tracking.setText("✅ Counting is ON")
-                 btn_toggle_tracking.setStyleSheet("background-color: #dcfce7; color: #166534; border: 1px solid #86efac; border-radius: 6px; padding: 10px; font-weight: bold;")
-             else:
-                 btn_toggle_tracking.setText("🛑 Counting is OFF")
-                 btn_toggle_tracking.setStyleSheet("background-color: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; border-radius: 6px; padding: 10px; font-weight: bold;")
-
-        def toggle_tracking():
-             self.tracking_active = not self.tracking_active
-             update_tracking_style()
-             if self.thread:
-                 self.thread.set_tracking(self.tracking_active)
- 
-        btn_toggle_tracking.clicked.connect(toggle_tracking)
-        update_tracking_style() # Set initial style
-         
         # --- Toggle Heatmap (New) ---
         self.btn_toggle_heatmap = QPushButton("🔥 Heatmap is OFF")
         self.btn_toggle_heatmap.setCheckable(True)
@@ -262,11 +259,11 @@ class VideoDetailDialog(QDialog):
         self.update_heatmap_style()
 
         # --- Toggle Fall Detection (New) ---
-        self.btn_toggle_fall_detection = QPushButton("🚨 Fall Detection is OFF")
+        self.btn_toggle_fall_detection = QPushButton("🚨 Fall Detection is ON")
         self.btn_toggle_fall_detection.setCheckable(True)
-        self.btn_toggle_fall_detection.setChecked(False)
+        self.btn_toggle_fall_detection.setChecked(True)
         self.btn_toggle_fall_detection.setCursor(Qt.PointingHandCursor)
-        self.fall_detection_active = False
+        self.fall_detection_active = True
 
         lbl_fall_info = QLabel("Detects when people fall down")
         lbl_fall_info.setStyleSheet("color: #64748b; font-size: 11px; margin-bottom: 10px;")
@@ -274,23 +271,10 @@ class VideoDetailDialog(QDialog):
         self.btn_toggle_fall_detection.clicked.connect(self.toggle_fall_detection)
         self.update_fall_detection_style()
 
-        # --- Toggle 17-Point Pose (New) ---
-        self.btn_toggle_pose = QPushButton("👤 17-Point Pose is OFF")
-        self.btn_toggle_pose.setCheckable(True)
-        self.btn_toggle_pose.setChecked(False)
-        self.btn_toggle_pose.setCursor(Qt.PointingHandCursor)
-        self.pose_active = False
-
-        lbl_pose_info = QLabel("Visualizes 17 body keypoints")
-        lbl_pose_info.setStyleSheet("color: #64748b; font-size: 11px; margin-bottom: 10px;")
-
-        self.btn_toggle_pose.clicked.connect(self.toggle_pose)
-        self.update_pose_style()
-
         # Gender & Age Detection Toggle
-        self.btn_toggle_face_analysis = QPushButton("👤 Gender & Age is OFF")
+        self.btn_toggle_face_analysis = QPushButton("👤 Gender & Age is ON")
         self.btn_toggle_face_analysis.setCursor(Qt.PointingHandCursor)
-        self.face_analysis_active = False
+        self.face_analysis_active = True
 
         lbl_face_info = QLabel("Detects gender and age")
         lbl_face_info.setStyleSheet("color: #64748b; font-size: 11px; margin-bottom: 10px;")
@@ -298,41 +282,98 @@ class VideoDetailDialog(QDialog):
         self.btn_toggle_face_analysis.clicked.connect(self.toggle_face_analysis)
         self.update_face_analysis_style()
 
-        # 3. Detection Settings
-        btn_detection_settings = QPushButton("⚙ Detection Settings")
-        btn_detection_settings.setCursor(Qt.PointingHandCursor)
-        btn_detection_settings.setStyleSheet("""
-            QPushButton {
-                background-color: #818cf8; 
-                color: white;
-                font-weight: bold;
-                border-radius: 6px;
-                padding: 10px;
-                border: none;
-                margin-top: 20px;
-            }
-            QPushButton:hover {
-                background-color: #6366f1;
-            }
-        """)
-        
+        # Mask Detection Toggle
+        self.btn_toggle_mask_detection = QPushButton("Mask Detection is ON")
+        self.btn_toggle_mask_detection.setCursor(Qt.PointingHandCursor)
+        self.mask_detection_active = True
+
+        lbl_mask_info = QLabel("Detects face masks (with/without/incorrect)")
+        lbl_mask_info.setStyleSheet("color: #64748b; font-size: 11px; margin-bottom: 10px;")
+
+        self.btn_toggle_mask_detection.clicked.connect(self.toggle_mask_detection)
+        self.update_mask_detection_style()
+
+        # Display Mode Toggle (Box vs Dot)
+        self.btn_toggle_display_mode = QPushButton("📦 Display: Head Dot")
+        self.btn_toggle_display_mode.setCursor(Qt.PointingHandCursor)
+        self.display_mode = "dot"  # "dot" or "box"
+
+        lbl_display_info = QLabel("Switch between bounding box and head dot")
+        lbl_display_info.setStyleSheet("color: #64748b; font-size: 11px; margin-bottom: 10px;")
+
+        self.btn_toggle_display_mode.clicked.connect(self.toggle_display_mode)
+        self.update_display_mode_style()
 
         right_layout.addLayout(settings_header)
+
+        # ========== SECTION 1: DRAWING TOOLS ==========
+        section1_label = QLabel("🎨 DRAWING TOOLS")
+        section1_label.setStyleSheet("color: #1e293b; font-weight: bold; font-size: 12px; margin-top: 10px; margin-bottom: 5px;")
+        right_layout.addWidget(section1_label)
+
         right_layout.addWidget(lbl_drawing)
         right_layout.addWidget(btn_draw_line)
         right_layout.addWidget(btn_draw_zone)
         right_layout.addWidget(btn_clear)
-        right_layout.addWidget(btn_toggle_detection) # Add Detection toggle
-        right_layout.addWidget(btn_toggle_tracking)
-        right_layout.addWidget(lbl_tracking_info) # Add info label
-        right_layout.addWidget(self.btn_toggle_heatmap) # Use self.
-        right_layout.addWidget(self.btn_toggle_fall_detection) # Fall detection toggle
-        right_layout.addWidget(lbl_fall_info) # Add fall detection info label
-        right_layout.addWidget(self.btn_toggle_pose) # Pose toggle
-        right_layout.addWidget(lbl_pose_info) # Add pose info label
-        right_layout.addWidget(self.btn_toggle_face_analysis) # Face analysis toggle
-        right_layout.addWidget(lbl_face_info) # Add face analysis info label
-        right_layout.addWidget(btn_detection_settings)
+
+        # Divider
+        divider1 = QFrame()
+        divider1.setFrameShape(QFrame.HLine)
+        divider1.setStyleSheet("background-color: #e2e8f0; margin: 15px 0;")
+        right_layout.addWidget(divider1)
+
+        # ========== SECTION 2: CORE DETECTION ==========
+        section2_label = QLabel("🔍 CORE DETECTION")
+        section2_label.setStyleSheet("color: #1e293b; font-weight: bold; font-size: 12px; margin-bottom: 5px;")
+        right_layout.addWidget(section2_label)
+
+        right_layout.addWidget(btn_toggle_detection)
+
+        # Divider
+        divider2 = QFrame()
+        divider2.setFrameShape(QFrame.HLine)
+        divider2.setStyleSheet("background-color: #e2e8f0; margin: 15px 0;")
+        right_layout.addWidget(divider2)
+
+        # ========== SECTION 3: AI ANALYSIS ==========
+        section3_label = QLabel("🤖 AI ANALYSIS")
+        section3_label.setStyleSheet("color: #1e293b; font-weight: bold; font-size: 12px; margin-bottom: 5px;")
+        right_layout.addWidget(section3_label)
+
+        right_layout.addWidget(self.btn_toggle_face_analysis)
+        right_layout.addWidget(lbl_face_info)
+        right_layout.addWidget(self.btn_toggle_mask_detection)
+        right_layout.addWidget(lbl_mask_info)
+
+        # Divider
+        divider3 = QFrame()
+        divider3.setFrameShape(QFrame.HLine)
+        divider3.setStyleSheet("background-color: #e2e8f0; margin: 15px 0;")
+        right_layout.addWidget(divider3)
+
+        # ========== SECTION 4: SAFETY & ALERTS ==========
+        section4_label = QLabel("⚠️ SAFETY & ALERTS")
+        section4_label.setStyleSheet("color: #1e293b; font-weight: bold; font-size: 12px; margin-bottom: 5px;")
+        right_layout.addWidget(section4_label)
+
+        right_layout.addWidget(self.btn_toggle_fall_detection)
+        right_layout.addWidget(lbl_fall_info)
+
+        # Divider
+        divider4 = QFrame()
+        divider4.setFrameShape(QFrame.HLine)
+        divider4.setStyleSheet("background-color: #e2e8f0; margin: 15px 0;")
+        right_layout.addWidget(divider4)
+
+        # ========== SECTION 5: VISUALIZATION ==========
+        section5_label = QLabel("👁️ VISUALIZATION")
+        section5_label.setStyleSheet("color: #1e293b; font-weight: bold; font-size: 12px; margin-bottom: 5px;")
+        right_layout.addWidget(section5_label)
+
+        right_layout.addWidget(self.btn_toggle_heatmap)
+        right_layout.addWidget(self.btn_toggle_display_mode)
+        right_layout.addWidget(lbl_display_info)
+
         right_layout.addStretch() 
 
         content_layout.addWidget(left_column, stretch=3)
@@ -396,11 +437,7 @@ class VideoDetailDialog(QDialog):
              else:
                  self.heatmap_active = False
                  self.update_heatmap_style()
-             
-             if hasattr(self.thread.detector, "pose_enabled"):
-                 self.pose_active = self.thread.detector.pose_enabled
-                 self.update_pose_style()
-             
+
         # Case 2: Own Thread (New Source)
         elif self.source is not None:
              # Persist=True for tracking
@@ -617,10 +654,34 @@ class VideoDetailDialog(QDialog):
     def update_heatmap_style(self):
         if self.heatmap_active:
             self.btn_toggle_heatmap.setText("🔥 Heatmap is ON")
-            self.btn_toggle_heatmap.setStyleSheet("background-color: #ffedd5; color: #c2410c; border: 1px solid #fdba74; border-radius: 6px; padding: 10px; font-weight: bold;")
+            self.btn_toggle_heatmap.setStyleSheet("""
+                QPushButton {
+                    background-color: #10b981;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 10px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #059669;
+                }
+            """)
         else:
             self.btn_toggle_heatmap.setText("🔥 Heatmap is OFF")
-            self.btn_toggle_heatmap.setStyleSheet("background-color: white; color: #64748b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-weight: bold;")
+            self.btn_toggle_heatmap.setStyleSheet("""
+                QPushButton {
+                    background-color: #6b7280;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 10px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #4b5563;
+                }
+            """)
 
     def toggle_heatmap(self):
         self.heatmap_active = not self.heatmap_active
@@ -631,30 +692,40 @@ class VideoDetailDialog(QDialog):
     def update_fall_detection_style(self):
         if self.fall_detection_active:
             self.btn_toggle_fall_detection.setText("🚨 Fall Detection is ON")
-            self.btn_toggle_fall_detection.setStyleSheet("background-color: #fecaca; color: #991b1b; border: 1px solid #f87171; border-radius: 6px; padding: 10px; font-weight: bold;")
+            self.btn_toggle_fall_detection.setStyleSheet("""
+                QPushButton {
+                    background-color: #10b981;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 10px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #059669;
+                }
+            """)
         else:
             self.btn_toggle_fall_detection.setText("🚨 Fall Detection is OFF")
-            self.btn_toggle_fall_detection.setStyleSheet("background-color: white; color: #64748b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-weight: bold;")
+            self.btn_toggle_fall_detection.setStyleSheet("""
+                QPushButton {
+                    background-color: #6b7280;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 10px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #4b5563;
+                }
+            """)
 
     def toggle_fall_detection(self):
         self.fall_detection_active = not self.fall_detection_active
         self.update_fall_detection_style()
         if self.thread:
             self.thread.set_fall_detection(self.fall_detection_active)
-
-    def update_pose_style(self):
-        if self.pose_active:
-            self.btn_toggle_pose.setText("👤 17-Point Pose is ON")
-            self.btn_toggle_pose.setStyleSheet("background-color: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; border-radius: 6px; padding: 10px; font-weight: bold;")
-        else:
-            self.btn_toggle_pose.setText("👤 17-Point Pose is OFF")
-            self.btn_toggle_pose.setStyleSheet("background-color: white; color: #64748b; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-weight: bold;")
-
-    def toggle_pose(self):
-        self.pose_active = not self.pose_active
-        self.update_pose_style()
-        if self.thread:
-            self.thread.set_pose_enabled(self.pose_active)
 
     def toggle_face_analysis(self):
         """Toggle gender and age detection"""
@@ -706,6 +777,94 @@ class VideoDetailDialog(QDialog):
                 }
                 QPushButton:hover {
                     background-color: #4b5563;
+                }
+            """)
+
+    def toggle_mask_detection(self):
+        """Toggle mask detection"""
+        self.mask_detection_active = not self.mask_detection_active
+        self.update_mask_detection_style()
+        if self.thread:
+            self.thread.set_mask_detection(self.mask_detection_active)
+
+    def update_mask_detection_style(self):
+        """Update mask detection button style"""
+        if self.mask_detection_active:
+            self.btn_toggle_mask_detection.setText("Mask Detection is ON")
+            self.btn_toggle_mask_detection.setStyleSheet("""
+                QPushButton {
+                    background-color: #10b981;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 10px;
+                    font-weight: bold;
+                    margin-bottom: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #059669;
+                }
+            """)
+        else:
+            self.btn_toggle_mask_detection.setText("Mask Detection is OFF")
+            self.btn_toggle_mask_detection.setStyleSheet("""
+                QPushButton {
+                    background-color: #6b7280;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 10px;
+                    font-weight: bold;
+                    margin-bottom: 5px;
+                }
+                QPushButton:hover {
+                    background-color: #4b5563;
+                }
+            """)
+
+    def toggle_display_mode(self):
+        """Toggle between bounding box and head dot display"""
+        if self.display_mode == "dot":
+            self.display_mode = "box"
+        else:
+            self.display_mode = "dot"
+
+        self.update_display_mode_style()
+        if self.thread:
+            self.thread.set_display_mode(self.display_mode)
+
+    def update_display_mode_style(self):
+        """Update display mode button style"""
+        # Display mode doesn't have ON/OFF states, both modes are "active"
+        # Use green for current mode to match other buttons
+        if self.display_mode == "box":
+            self.btn_toggle_display_mode.setText("📦 Display: Bounding Box")
+            self.btn_toggle_display_mode.setStyleSheet("""
+                QPushButton {
+                    background-color: #10b981;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 10px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #059669;
+                }
+            """)
+        else:  # "dot"
+            self.btn_toggle_display_mode.setText("📦 Display: Head Dot")
+            self.btn_toggle_display_mode.setStyleSheet("""
+                QPushButton {
+                    background-color: #10b981;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 10px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #059669;
                 }
             """)
 

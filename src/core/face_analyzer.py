@@ -16,6 +16,8 @@ except ImportError:
     print("Install with: pip install insightface onnxruntime-gpu")
 
 
+
+
 class FaceAnalyzer:
     """
     Face analyzer using InsightFace for gender and age detection.
@@ -49,7 +51,8 @@ class FaceAnalyzer:
                 name='buffalo_l',
                 providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
             )
-            self.app.prepare(ctx_id=0, det_size=(640, 640))
+            # Use smaller det_size (320x320) for 4x faster performance than 640x640
+            self.app.prepare(ctx_id=0, det_size=(320, 320))
             self.enabled = True
             self._initialized = True
             print("InsightFace model loaded successfully!")
@@ -102,7 +105,7 @@ class FaceAnalyzer:
                 gender = 'Male' if face.gender == 1 else 'Female'
 
                 # Get age
-                age = int(face.age)
+                age_val = int(face.age)
 
                 # If person_boxes provided, check if face is within any person box
                 if person_boxes is not None:
@@ -122,7 +125,7 @@ class FaceAnalyzer:
                 results.append({
                     'bbox': [x1, y1, x2, y2],
                     'gender': gender,
-                    'age': age
+                    'age': age_val
                 })
 
             return results
@@ -130,6 +133,8 @@ class FaceAnalyzer:
         except Exception as e:
             print(f"Error analyzing faces: {e}")
             return []
+
+
 
     def draw_face_info(self, frame, face_info):
         """
@@ -145,7 +150,7 @@ class FaceAnalyzer:
         for face in face_info:
             x1, y1, x2, y2 = face['bbox']
             gender = face['gender']
-            age = face['age']
+            age_label = face['age']
 
             # Choose color based on gender
             color = (255, 0, 255) if gender == 'Male' else (255, 192, 203)  # Purple for Male, Pink for Female
@@ -154,7 +159,7 @@ class FaceAnalyzer:
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
 
             # Prepare label
-            label = f"{gender}, {age}y"
+            label = f"{gender}, {age_label}"
 
             # Get text size
             font = cv2.FONT_HERSHEY_SIMPLEX

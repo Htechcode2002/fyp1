@@ -8,14 +8,14 @@ class VideoThread(QThread):
     frame_signal = Signal(QPixmap)
     stats_signal = Signal(dict) # Emits counts/stats
     
-    def __init__(self, source_path, resolution=None, tracker="bytetrack.yaml", location_name=None, video_id=None):
+    def __init__(self, source_path, resolution=None, tracker="bytetrack.yaml", location_name=None, video_id=None, danger_threshold=100, loitering_threshold=5.0, fall_threshold=2.0):
         super().__init__()
         self.source_path = source_path
         self.resolution = resolution
         self.tracking_enabled = True # Default On
         self.detection_enabled = True # Default On
         self._run_flag = True
-        self.detector = VideoDetector(tracker=tracker, location_name=location_name, video_id=video_id)
+        self.detector = VideoDetector(tracker=tracker, location_name=location_name, video_id=video_id, danger_threshold=danger_threshold, loitering_threshold=loitering_threshold, fall_threshold=fall_threshold)
 
     def set_tracking(self, enabled):
         self.tracking_enabled = enabled
@@ -39,13 +39,18 @@ class VideoThread(QThread):
         if self.detector:
             self.detector.set_fall_detection(enabled)
 
-    def set_pose_enabled(self, enabled):
-        if self.detector:
-            self.detector.set_pose_enabled(enabled)
-
     def set_face_analysis_enabled(self, enabled):
         if self.detector:
             self.detector.set_face_analysis_enabled(enabled)
+
+    def set_mask_detection(self, enabled):
+        if self.detector:
+            self.detector.set_mask_detection(enabled)
+
+    def set_display_mode(self, mode):
+        """Set display mode: 'dot' or 'box'"""
+        if self.detector:
+            self.detector.set_display_mode(mode)
 
     def get_yt_url(self, url):
         import yt_dlp
