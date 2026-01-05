@@ -13,12 +13,6 @@ env/
 .idea/
 .claude/
 
-# Models (Large files - download separately)
-models/
-*.pt
-*.pth
-*.onnx
-
 # Cache
 .cache/
 
