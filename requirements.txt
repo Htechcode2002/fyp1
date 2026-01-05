@@ -3,10 +3,10 @@ PySide6>=6.0.0
 opencv-python>=4.5.0
 numpy>=1.21.0
 
-# YOLO and Deep Learning
-ultralytics>=8.0.0
-torch>=2.0.0
-torchvision>=0.15.0
+# YOLO and Deep Learning (Pinned versions for consistent detection results)
+ultralytics==8.3.246
+torch==2.5.1
+torchvision==0.20.1
 
 # Face Analysis (Gender, Age Detection)
 insightface>=0.7.0

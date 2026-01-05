@@ -18,7 +18,8 @@ class DatabaseManager:
             cls._instance.error_throttle_seconds = 60 # Only print same error every 60s
             
             # Async Worker Setup
-            cls._instance.queue = queue.Queue()
+            # CRITICAL: Set max queue size to prevent memory overflow
+            cls._instance.queue = queue.Queue(maxsize=1000)  # Limit to 1000 pending events
             cls._instance.running = True
             cls._instance.worker_thread = threading.Thread(target=cls._instance._process_queue, daemon=True)
             cls._instance.worker_thread.start()
@@ -67,8 +68,8 @@ class DatabaseManager:
                     try:
                         cursor = conn.cursor()
                         query = """
-                        INSERT INTO crossing_events (video_id, location, line_name, count_left, count_right, clothing_color, gender, age, mask_status, timestamp)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO crossing_events (video_id, location, line_name, count_left, count_right, clothing_color, gender, age, mask_status, handbag, timestamp)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """
                         cursor.execute(query, event_data)
                         conn.commit()
@@ -104,6 +105,7 @@ class DatabaseManager:
                 gender VARCHAR(50),
                 age VARCHAR(50),
                 mask_status VARCHAR(50),
+                handbag TINYINT DEFAULT 0,
                 timestamp DATETIME
             )
             """
@@ -135,6 +137,13 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE crossing_events ADD COLUMN mask_status VARCHAR(50) AFTER age")
                 conn.commit()
 
+            # Check for handbag column and add if missing
+            cursor.execute("SHOW COLUMNS FROM crossing_events LIKE 'handbag'")
+            if cursor.fetchone() is None:
+                print("Adding missing 'handbag' column...")
+                cursor.execute("ALTER TABLE crossing_events ADD COLUMN handbag TINYINT DEFAULT 0 AFTER mask_status")
+                conn.commit()
+
             print("Table 'crossing_events' check/creation successful.")
         except Error as e:
             print(f"Error creating table: {e}")
@@ -142,12 +151,16 @@ class DatabaseManager:
             if conn and conn.is_connected():
                 cursor.close()
 
-    def insert_event(self, video_id, location, line_name, count_left, count_right, clothing_color, gender=None, age=None, mask_status=None):
+    def insert_event(self, video_id, location, line_name, count_left, count_right, clothing_color, gender=None, age=None, mask_status=None, handbag=0):
         """Queue a crossing event for insertion."""
         # Use local PC time instead of database server time
         local_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        # Non-blocking put
-        self.queue.put((video_id, location, line_name, count_left, count_right, clothing_color, gender, age, mask_status, local_timestamp))
+
+        # CRITICAL: Use non-blocking put with timeout to prevent crashes
+        try:
+            self.queue.put((video_id, location, line_name, count_left, count_right, clothing_color, gender, age, mask_status, handbag, local_timestamp), block=False)
+        except queue.Full:
+            print(f"⚠️ WARNING: Database queue is full ({self.queue.qsize()} events). Dropping event to prevent memory overflow.")
 
     def get_analytics_data(self, hours=1, interval='minute'):
         """
@@ -240,6 +253,12 @@ class DatabaseManager:
             if filters.get('mask') and filters['mask'] != 'All':
                 query += " AND mask_status = %s"
                 params.append(filters['mask'])
+
+            # Handbag filter
+            if filters.get('handbag') and filters['handbag'] != 'All':
+                handbag_value = 1 if filters['handbag'] == 'With Handbag' else 0
+                query += " AND handbag = %s"
+                params.append(handbag_value)
 
             cursor.execute(query, params)
             deleted_count = cursor.rowcount

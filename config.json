@@ -23,6 +23,16 @@
             "danger_threshold": 100,
             "loitering_threshold": 5,
             "fall_threshold": 2
+        },
+        {
+            "id": "f3ad97f7",
+            "name": "Source f3ad97f7",
+            "location": "",
+            "type": "file",
+            "path": "C:/Users/Charles/Desktop/handbag.mp4",
+            "danger_threshold": 100,
+            "loitering_threshold": 5,
+            "fall_threshold": 2
         }
     ]
 }

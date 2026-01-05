@@ -59,6 +59,12 @@ class DataLoaderThread(QThread):
                 query += " AND mask_status = %s"
                 params.append(self.filters['mask'])
 
+            # Handbag filter
+            if self.filters.get('handbag') and self.filters['handbag'] != 'All':
+                handbag_value = 1 if self.filters['handbag'] == 'With Handbag' else 0
+                query += " AND handbag = %s"
+                params.append(handbag_value)
+
             # Sorting
             sort_column = self.filters.get('sort_column', 'timestamp')
             sort_order = self.filters.get('sort_order', 'DESC')
@@ -441,15 +447,24 @@ class DataViewPage(QWidget):
         filters_grid.addWidget(self.combo_mask, 1, 5)
 
         # Row 3
+        lbl_handbag = QLabel("Handbag:")
+        lbl_handbag.setStyleSheet(label_style)
+        filters_grid.addWidget(lbl_handbag, 2, 0)
+
+        self.combo_handbag = QComboBox()
+        self.combo_handbag.addItems(["All", "With Handbag", "No Handbag"])
+        self.combo_handbag.setStyleSheet(input_style)
+        filters_grid.addWidget(self.combo_handbag, 2, 1)
+
         lbl_limit = QLabel("Max Rows:")
         lbl_limit.setStyleSheet(label_style)
-        filters_grid.addWidget(lbl_limit, 2, 0)
+        filters_grid.addWidget(lbl_limit, 2, 2)
 
         self.combo_limit = QComboBox()
         self.combo_limit.addItems(["100", "500", "1000", "5000", "All"])
         self.combo_limit.setCurrentText("1000")
         self.combo_limit.setStyleSheet(input_style)
-        filters_grid.addWidget(self.combo_limit, 2, 1)
+        filters_grid.addWidget(self.combo_limit, 2, 3)
 
         filter_layout.addLayout(filters_grid)
 
@@ -597,10 +612,10 @@ class DataViewPage(QWidget):
 
         # === Data Table ===
         self.table = QTableWidget()
-        self.table.setColumnCount(11)
+        self.table.setColumnCount(12)
         self.table.setHorizontalHeaderLabels([
             "ID", "Time", "Location", "Line",
-            "Left", "Right", "Color", "Gender", "Age", "Mask", "Video ID"
+            "Left", "Right", "Color", "Gender", "Age", "Mask", "Handbag", "Video ID"
         ])
 
         # Table configuration
@@ -749,6 +764,7 @@ class DataViewPage(QWidget):
         gender_filter = None if self.combo_gender.currentText() == "All" else self.combo_gender.currentText()
         color_filter = None if self.combo_color.currentText() == "All" else self.combo_color.currentText()
         mask_filter = None if self.combo_mask.currentText() == "All" else self.combo_mask.currentText()
+        handbag_filter = None if self.combo_handbag.currentText() == "All" else self.combo_handbag.currentText()
         limit = 999999 if self.combo_limit.currentText() == "All" else int(self.combo_limit.currentText())
 
         # Get selected video ID from combo box
@@ -761,6 +777,7 @@ class DataViewPage(QWidget):
             'gender': gender_filter,
             'color': color_filter,
             'mask': mask_filter,
+            'handbag': handbag_filter,
             'limit': limit,
             'sort_column': 'timestamp',
             'sort_order': 'DESC'
@@ -884,12 +901,22 @@ class DataViewPage(QWidget):
 
             self.table.setItem(row, 9, item_mask)
 
+            # Handbag
+            handbag = row_data.get('handbag', 0)
+            handbag_text = "👜 Yes" if handbag == 1 else "—"
+            item_handbag = QTableWidgetItem(handbag_text)
+            item_handbag.setTextAlignment(Qt.AlignCenter)
+            if handbag == 1:
+                item_handbag.setForeground(QColor("#8b5cf6"))  # Purple
+                item_handbag.setFont(QFont("Arial", 10, QFont.Bold))
+            self.table.setItem(row, 10, item_handbag)
+
             # Video ID
             video_id = str(row_data.get('video_id', ''))
             item_video = QTableWidgetItem(video_id)
             item_video.setFont(QFont("Courier", 9))
             item_video.setForeground(QColor("#64748b"))
-            self.table.setItem(row, 10, item_video)
+            self.table.setItem(row, 11, item_video)
 
         self.table.setSortingEnabled(True)
 
@@ -1286,6 +1313,7 @@ class DataViewPage(QWidget):
         gender_filter = None if self.combo_gender.currentText() == "All" else self.combo_gender.currentText()
         color_filter = None if self.combo_color.currentText() == "All" else self.combo_color.currentText()
         mask_filter = None if self.combo_mask.currentText() == "All" else self.combo_mask.currentText()
+        handbag_filter = None if self.combo_handbag.currentText() == "All" else self.combo_handbag.currentText()
         selected_video_id = self.combo_video_id.currentData()
 
         filters = {
@@ -1295,6 +1323,7 @@ class DataViewPage(QWidget):
             'gender': gender_filter,
             'color': color_filter,
             'mask': mask_filter,
+            'handbag': handbag_filter,
         }
 
         # Delete from database

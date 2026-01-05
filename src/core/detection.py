@@ -91,15 +91,17 @@ class VideoDetector:
         self.color_cache = {} # track_id -> color_string (final confirmed color)
         self.color_confirmed = {} # track_id -> bool (True if detected once)
 
-        # Face Analysis Caching (3-confirmation)
+        # Face Analysis Caching (1-confirmation) - OPTIMIZED
         self.face_cache = {} # track_id -> {gender, age} (final confirmed)
-        self.face_confirmed = {} # track_id -> bool (True if confirmed after 3 samples)
-        self.face_samples = {} # track_id -> [(gender, age), ...] (samples for confirmation)
+        self.face_confirmed = {} # track_id -> bool (True if confirmed - stop detecting)
 
-        # Mask Detection Caching (3-confirmation)
+        # Mask Detection Caching (1-confirmation) - OPTIMIZED
         self.mask_cache = {} # track_id -> mask_status_string (final confirmed)
-        self.mask_confirmed = {} # track_id -> bool (True if confirmed after 3 samples)
-        self.mask_samples = {} # track_id -> [mask_status, ...] (samples for confirmation)
+        self.mask_confirmed = {} # track_id -> bool (True if confirmed - stop detecting)
+
+        # Handbag Detection Tracking (1-confirmation caching)
+        self.handbag_cache = {} # track_id -> 1 if has handbag, 0 if no handbag (final confirmed)
+        self.handbag_confirmed = {} # track_id -> bool (True if confirmed - stop detecting)
 
         # Line crossing flash effect
         self.line_flash = {} # line_idx -> timestamp of last crossing
@@ -616,7 +618,22 @@ class VideoDetector:
             return [], {}
 
         self.frame_count += 1
-        
+
+        # CRITICAL: Monitor cache sizes to detect memory leaks
+        if self.frame_count % 300 == 0:  # Check every 300 frames (every 10 seconds at 30 FPS)
+            cache_sizes = {
+                'color_cache': len(self.color_cache),
+                'face_cache': len(self.face_cache),
+                'mask_cache': len(self.mask_cache),
+                'handbag_cache': len(self.handbag_cache),
+                'track_history': len(self.track_history),
+                'seen_track_ids': len(self.seen_track_ids)
+            }
+            total_cache_size = sum(cache_sizes.values())
+            if total_cache_size > 500:  # Warning threshold
+                print(f"⚠️ WARNING: Large cache detected ({total_cache_size} entries): {cache_sizes}")
+                print(f"   Consider checking if video is looping correctly and reset_analytics() is being called")
+
         # PERFORMANCE OPTIMIZATION: Skip frames to save GPU
         # If this is a skipped frame, return previous results to keep UI alive
         if self.frame_count % self.inference_freq != 0 and self.last_detections:
@@ -674,7 +691,74 @@ class VideoDetector:
         # Track active IDs in this frame
         current_frame_ids = set()
 
-        
+        # === HANDBAG DETECTION: First pass to collect all detections ===
+        # OPTIMIZATION: Only detect for people who DON'T have confirmed handbag status
+        # Collect person and handbag detections for association
+        person_detections = []  # list of {track_id, box, centroid} - only unconfirmed people
+        handbag_detections = []  # list of {box, centroid}
+
+        for result in results:
+            boxes = result.boxes
+            if tracking_enabled and boxes.id is not None:
+                ids = boxes.id.cpu().numpy().astype(int)
+            else:
+                ids = [None] * len(boxes)
+            cls_ids = boxes.cls.cpu().numpy().astype(int)
+
+            for box, track_id, cls_id in zip(boxes, ids, cls_ids):
+                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+
+                if cls_id == 0:  # Person
+                    # OPTIMIZATION: Only add to detection list if NOT confirmed yet
+                    if track_id is not None and not self.handbag_confirmed.get(track_id, False):
+                        person_detections.append({
+                            'track_id': track_id,
+                            'box': (x1, y1, x2, y2),
+                            'centroid': (cx, cy)
+                        })
+                elif cls_id == 26:  # Handbag (class 26 in COCO)
+                    # Only collect handbags if we have unconfirmed people
+                    handbag_detections.append({
+                        'box': (x1, y1, x2, y2),
+                        'centroid': (cx, cy)
+                    })
+
+        # Associate handbags with nearby persons (ONLY for unconfirmed people)
+        # Skip association if no unconfirmed people (performance optimization)
+        if person_detections:
+            for person in person_detections:
+                track_id = person['track_id']
+                if track_id is None:
+                    continue
+
+                px, py = person['centroid']
+                p_x1, p_y1, p_x2, p_y2 = person['box']
+
+                # Check for nearby handbags (within reasonable distance)
+                has_handbag = 0
+                for handbag in handbag_detections:
+                    hx, hy = handbag['centroid']
+
+                    # Calculate distance between person and handbag
+                    distance = np.sqrt((px - hx)**2 + (py - hy)**2)
+
+                    # Check if handbag is near person (distance threshold)
+                    person_height = p_y2 - p_y1
+                    max_distance = person_height * 0.8  # Handbag within 80% of person height
+
+                    if distance < max_distance:
+                        has_handbag = 1
+                        break
+
+                # Cache the result and CONFIRM - stop future detection for this track_id
+                self.handbag_cache[track_id] = has_handbag
+                self.handbag_confirmed[track_id] = True  # CONFIRMED - stop detecting
+                if has_handbag:
+                    print(f"[HANDBAG CONFIRMED] Track ID {track_id}: Has handbag")
+                else:
+                    print(f"[HANDBAG CONFIRMED] Track ID {track_id}: No handbag")
+
         for result in results:
             boxes = result.boxes
 
@@ -842,7 +926,12 @@ class VideoDetector:
                                         if track_id is not None and track_id in self.mask_cache:
                                             mask_val = self.mask_cache[track_id]
 
-                                        print(f"[DEBUG] Line crossing - track_id: {track_id}, mask_val: {mask_val}, mask_cache: {self.mask_cache}")
+                                        # Get Handbag Status from cache if available
+                                        handbag_val = 0
+                                        if track_id is not None and track_id in self.handbag_cache:
+                                            handbag_val = self.handbag_cache[track_id]
+
+                                        print(f"[DEBUG] Line crossing - track_id: {track_id}, mask_val: {mask_val}, handbag: {handbag_val}")
 
                                         self.db.insert_event(
                                             video_id=self.video_id,
@@ -853,7 +942,8 @@ class VideoDetector:
                                             clothing_color=shirt_color,
                                             gender=gender_val,
                                             age=age_val,
-                                            mask_status=mask_val
+                                            mask_status=mask_val,
+                                            handbag=handbag_val
                                         )
                                     except Exception as e:
                                         print(f"DB Log Error: {e}")
@@ -1141,10 +1231,9 @@ class VideoDetector:
             except Exception as e:
                 print(f"Fall detection error: {e}")
 
-        # --- FACE ANALYSIS: Gender and Age Detection (with 3-confirmation caching) ---
+        # --- FACE ANALYSIS: Gender and Age Detection (with 1-confirmation caching) ---
         # CRITICAL OPTIMIZATION: Only run every Nth frame to prevent blocking
         if self.face_analysis_enabled and self.face_analyzer.enabled and self.frame_count % self.face_analysis_freq == 0:
-            # print(f"[DEBUG] Face analysis ENABLED and running on frame")
             try:
                 # OPTIMIZATION: Only analyze people who don't have CONFIRMED face info!
                 people_to_analyze = []
@@ -1159,18 +1248,14 @@ class VideoDetector:
                             # Need to analyze this person
                             people_to_analyze.append(det)
 
-                # print(f"[DEBUG] People to analyze: {len(people_to_analyze)}")
                 if people_to_analyze:
                     # Get person bounding boxes for filtering in FaceAnalyzer
                     person_boxes = [p['box'] for p in people_to_analyze]
 
                     # Analyze faces ONLY for those who need it
                     face_info = self.face_analyzer.analyze_faces(frame, person_boxes)
-                    # print(f"[DEBUG] Face info detected: {len(face_info)} faces")
 
                     # Match detected faces back to the people who needed analysis
-                    # Since FaceAnalyzer already filters faces to be within person boxes,
-                    # we just need to match each person to their closest face
                     for det in people_to_analyze:
                         px1, py1, px2, py2 = det['box']
                         person_center_x = (px1 + px2) / 2
@@ -1195,45 +1280,16 @@ class VideoDetector:
                                 closest_face = face
 
                         # FaceAnalyzer already filtered, so if we found a face, it's valid
-                        if closest_face:
+                        if closest_face and tid is not None and not self.face_confirmed.get(tid, False):
                             gender = closest_face['gender']
                             age = closest_face['age']
-                            # print(f"[DEBUG] Matched face to person {tid}: {gender}, {age}")
 
-                            # 3-CONFIRMATION LOGIC
-                            if tid is not None and not self.face_confirmed.get(tid, False):
-                                # Initialize sample list if needed
-                                if tid not in self.face_samples:
-                                    self.face_samples[tid] = []
-
-                                # Add this sample
-                                self.face_samples[tid].append((gender, age))
-                                # print(f"[DEBUG] Added sample for {tid}: {gender}, {age}. Total samples: {len(self.face_samples[tid])}")
-
-                                # Keep only last 3 samples
-                                if len(self.face_samples[tid]) > 3:
-                                    self.face_samples[tid] = self.face_samples[tid][-3:]
-
-                                # Check if we have 3 samples
-                                if len(self.face_samples[tid]) == 3:
-                                    # Extract genders and ages
-                                    genders = [s[0] for s in self.face_samples[tid]]
-                                    ages = [s[1] for s in self.face_samples[tid]]
-                                    # print(f"[DEBUG] Checking confirmation: genders={genders}, ages={ages}")
-
-                                    # Gender must be consistent (all 3 same)
-                                    if genders[0] == genders[1] == genders[2]:
-                                        # CONFIRMED! Use consistent gender and average age
-                                        final_gender = genders[0]
-                                        final_age = round(sum(ages) / 3)  # Average age, rounded
-
-                                        self.face_cache[tid] = {'gender': final_gender, 'age': final_age}
-                                        self.face_confirmed[tid] = True
-                                        det['gender'] = final_gender
-                                        det['age'] = final_age
-                                        print(f"[FACE CONFIRMED] Track ID {tid}: {final_gender}, Age {final_age} (avg of {ages})")
-                                    # else:
-                                        # print(f"[DEBUG] Gender mismatch, clearing samples for {tid}")
+                            # ✅ 1-CONFIRMATION LOGIC - Cache immediately, stop detecting
+                            self.face_cache[tid] = {'gender': gender, 'age': age}
+                            self.face_confirmed[tid] = True
+                            det['gender'] = gender
+                            det['age'] = age
+                            print(f"[FACE CONFIRMED] Track ID {tid}: {gender}, Age {age}")
 
             except Exception as e:
                 print(f"Face analysis error: {e}")
@@ -1247,7 +1303,7 @@ class VideoDetector:
                             det['gender'] = self.face_cache[tid]['gender']
                             det['age'] = self.face_cache[tid]['age']
 
-        # --- MASK DETECTION (with 3-confirmation caching) ---
+        # --- MASK DETECTION (with 1-confirmation caching) ---
         if self.mask_detection_enabled and self.mask_model is not None:
             # print(f"[DEBUG] Mask detection ENABLED and running on frame")
             try:
@@ -1555,6 +1611,12 @@ class VideoDetector:
                          label += " [NO MASK]"  # Without mask
                      elif mask_class == 2:
                          label += " [MASK ERR]"  # Incorrect mask
+
+                 # Append Handbag Status if available
+                 if track_id is not None and self.handbag_confirmed.get(track_id, False):
+                     has_handbag = self.handbag_cache.get(track_id, 0)
+                     if has_handbag == 1:
+                         label += " [BAG]"  # Has handbag
 
             if label:
                 # Draw Label with background
@@ -1964,10 +2026,10 @@ class VideoDetector:
         self.pose_cache.clear()  # Clear pose keypoints cache
         self.face_cache.clear()
         self.face_confirmed.clear()
-        self.face_samples.clear()
         self.mask_cache.clear()
         self.mask_confirmed.clear()
-        self.mask_samples.clear()
+        self.handbag_cache.clear()  # Clear handbag detection cache
+        self.handbag_confirmed.clear()  # Clear handbag confirmation status
 
         print(f"[DETECTOR] 🔄 Analytics reset for video loop - video_id={self.video_id}")
 
