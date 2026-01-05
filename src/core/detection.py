@@ -959,7 +959,7 @@ class VideoDetector:
                                         "track_id": track_id
                                     })
                         self.track_history[track_id].append((float(cx), float(cy)))
-                        if len(self.track_history[track_id]) > 300: # Limit history
+                        if len(self.track_history[track_id]) > 30: # Limit to last 30 points (~1 second at 30 FPS)
                              self.track_history[track_id].pop(0)
 
                         # Check Loitering - only if zones are defined
@@ -2030,6 +2030,7 @@ class VideoDetector:
         self.mask_confirmed.clear()
         self.handbag_cache.clear()  # Clear handbag detection cache
         self.handbag_confirmed.clear()  # Clear handbag confirmation status
+        self.track_history.clear()  # Clear trajectory lines on video loop
 
         print(f"[DETECTOR] 🔄 Analytics reset for video loop - video_id={self.video_id}")
 
