@@ -635,11 +635,12 @@ class VideoDetector:
         if tracking_enabled:
             # Persist=True for tracking
             # Classes: 0=Person, 24=Backpack, 26=Handbag
+            # half=False forces FP32 precision for consistent results across different GPUs
             # print(f"[DEBUG] Running track... {self.frame_count}")
-            results = self.model.track(frame, persist=True, verbose=False, classes=[0, 24, 26], tracker=self.tracker, imgsz=imgsz, conf=conf_threshold)
+            results = self.model.track(frame, persist=True, verbose=False, classes=[0, 24, 26], tracker=self.tracker, imgsz=imgsz, conf=conf_threshold, half=False)
         else:
             # Predict only (Detection) - No IDs
-            results = self.model.predict(frame, verbose=False, classes=[0, 24, 26], imgsz=imgsz, conf=conf_threshold)
+            results = self.model.predict(frame, verbose=False, classes=[0, 24, 26], imgsz=imgsz, conf=conf_threshold, half=False)
 
         # Run pose detection for people who don't have cached keypoints yet
         # This helps with accurate clothing region detection
