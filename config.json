@@ -7,7 +7,7 @@
         "database": "test"
     },
     "yolo": {
-        "model_path": "models\\yolov8n.pt"
+        "model_path": "models\\yolov8m.pt"
     },
     "thresholds": {
         "warning": 20,
@@ -15,21 +15,11 @@
     },
     "video_sources": [
         {
-            "id": "709daacc",
-            "name": "Source 709daacc",
+            "id": "9a069e77",
+            "name": "Source 9a069e77",
             "location": "",
             "type": "file",
-            "path": "C:/Users/Charles/Downloads/853889-hd_1920_1080_25fps.mp4",
-            "danger_threshold": 100,
-            "loitering_threshold": 5,
-            "fall_threshold": 2
-        },
-        {
-            "id": "f3ad97f7",
-            "name": "Source f3ad97f7",
-            "location": "",
-            "type": "file",
-            "path": "C:/Users/Charles/Desktop/handbag.mp4",
+            "path": "C:/Users/MMU/Downloads/mask (2).mp4",
             "danger_threshold": 100,
             "loitering_threshold": 5,
             "fall_threshold": 2

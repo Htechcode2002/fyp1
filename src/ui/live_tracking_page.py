@@ -141,7 +141,7 @@ class CameraWidget(QFrame):
         # 转换为QPixmap
         height, width, channel = frame.shape
         bytes_per_line = 3 * width
-        q_img = QImage(frame.data, width, height, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
+        q_img = QImage(frame.data, width, height, bytes_per_line, QImage.Format_RGB888).rgbSwapped().copy()
         pixmap = QPixmap.fromImage(q_img)
 
         # 缩放
@@ -409,7 +409,7 @@ class LiveTrackingPage(QWidget):
                     height, width, channel = target_img.shape
                     bytes_per_line = 3 * width
                     q_img = QImage(target_img.data, width, height, bytes_per_line,
-                                 QImage.Format_RGB888).rgbSwapped()
+                                 QImage.Format_RGB888).rgbSwapped().copy()
                     pixmap = QPixmap.fromImage(q_img)
                     scaled = pixmap.scaled(80, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                     self.target_preview.setPixmap(scaled)

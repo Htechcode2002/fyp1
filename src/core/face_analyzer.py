@@ -18,17 +18,22 @@ except ImportError:
 
 
 
+import threading
+
 class FaceAnalyzer:
     """
     Face analyzer using InsightFace for gender and age detection.
     Singleton pattern to ensure models are only loaded once.
     """
     _instance = None
+    _lock = threading.Lock() # Global lock for the underlying C++ model
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(FaceAnalyzer, cls).__new__(cls)
-            cls._instance._initialized = False
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super(FaceAnalyzer, cls).__new__(cls)
+                    cls._instance._initialized = False
         return cls._instance
 
     def __init__(self):
@@ -51,8 +56,8 @@ class FaceAnalyzer:
                 name='buffalo_l',
                 providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
             )
-            # Use smaller det_size (320x320) for 4x faster performance than 640x640
-            self.app.prepare(ctx_id=0, det_size=(320, 320))
+            # Use standard det_size (640x640) for better accuracy on 4090
+            self.app.prepare(ctx_id=0, det_size=(640, 640))
             self.enabled = True
             self._initialized = True
             print("InsightFace model loaded successfully!")
@@ -88,12 +93,14 @@ class FaceAnalyzer:
                 ...
             ]
         """
-        if not self.enabled or self.app is None:
+        if not self.enabled or self.app is None or getattr(self, 'safe_disable', False):
             return []
 
         try:
-            # Detect and analyze faces
-            faces = self.app.get(frame)
+            # CRITICAL: Use lock to prevent concurrent access to ONNX Runtime/C++ model
+            with self._lock:
+                # Detect and analyze faces
+                faces = self.app.get(frame)
 
             results = []
             for face in faces:
@@ -131,7 +138,8 @@ class FaceAnalyzer:
             return results
 
         except Exception as e:
-            print(f"Error analyzing faces: {e}")
+            print(f"[FACE ANALYZER] ❌ Fatal error: {e}. Safe-disabling face analysis for this session.")
+            self.safe_disable = True
             return []
 
 

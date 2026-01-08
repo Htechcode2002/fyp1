@@ -15,6 +15,12 @@ class DataLoaderThread(QThread):
 
     def run(self):
         try:
+            # CHECK: If DB is in cooling period, don't even try to query
+            if hasattr(self.db, '_cooling_until') and time.time() < self.db._cooling_until:
+                print("[CHART] ❄️ Skipping data load during DB cooling period.")
+                self.data_loaded.emit([])
+                return
+                
             # This runs in background thread
             raw_data = self.db.get_analytics_data(self.hours, self.interval)
             points = []

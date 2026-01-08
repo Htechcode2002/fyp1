@@ -5,7 +5,7 @@ from PySide6.QtGui import QImage, QPixmap
 from src.core.detection import VideoDetector
 
 class VideoThread(QThread):
-    frame_signal = Signal(QPixmap)
+    frame_signal = Signal(QImage)
     stats_signal = Signal(dict) # Emits counts/stats
     
     def __init__(self, source_path, resolution=None, tracker="bytetrack.yaml", location_name=None, video_id=None, danger_threshold=100, loitering_threshold=5.0, fall_threshold=2.0):
@@ -96,8 +96,9 @@ class VideoThread(QThread):
              w = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
              h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
              fps = cap.get(cv2.CAP_PROP_FPS)
+             self.fps = fps if fps > 0 else 25 # Fallback to 25 if data missing
              frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-             print(f"DEBUG: Video opened. Backend: {backend}, Size: {w}x{h}, FPS: {fps}, Frames: {frames}")
+             print(f"DEBUG: Video opened. Backend: {backend}, Size: {w}x{h}, FPS: {self.fps}, Frames: {frames}")
              
              if w == 0 or h == 0:
                  print("ERROR: Video opened but dimensions are 0. Codec issue?")
@@ -131,36 +132,74 @@ class VideoThread(QThread):
                 retries = 0 # Reset on success
             
             if ret:
-                # Run Detection?
-                detections = []
-                counts = {}
-                
-                if self.detection_enabled:
-                    detections, counts = self.detector.detect(frame, tracking_enabled=self.tracking_enabled)
-                else:
-                    # If detection disabled, just use existing counts (don't update)
-                    counts = self.detector.line_counts
+                try:
+                    # Run Detection?
+                    detections = []
+                    counts = {}
                     
-                frame = self.detector.annotate_frame(frame, detections, counts)
-                
-                # Emit stats
-                self.stats_signal.emit(counts)
-                
-                # Convert to RGB
-                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb_image.shape
-                bytes_per_line = ch * w
-                convert_to_Qt_format = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-                
-                if self.resolution:
-                    p = convert_to_Qt_format.scaled(self.resolution[0], self.resolution[1], Qt.KeepAspectRatio)
-                else:
-                    p = convert_to_Qt_format
+                    if self.detection_enabled:
+                        detections, counts = self.detector.detect(frame, tracking_enabled=self.tracking_enabled)
+                    else:
+                        # If detection disabled, just use existing counts (don't update)
+                        counts = self.detector.line_counts
+                        
+                    frame = self.detector.annotate_frame(frame, detections, counts)
                     
-                self.frame_signal.emit(QPixmap.fromImage(p))
+                    # Emit stats (Throttled to once every 15 frames or on change)
+                    if not hasattr(self, '_last_counts'):
+                        self._last_counts = {}
+                    
+                    # Check if counts significantly changed or enough time passed
+                    counts_changed = counts != self._last_counts
+                    if counts_changed or (self.detector.frame_count % 15 == 0):
+                        self.stats_signal.emit(counts)
+                        self._last_counts = counts.copy()
+                    
+                    # Convert to RGB
+                    rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    h, w, ch = rgb_image.shape
+                    bytes_per_line = ch * w
+                    
+                    # CRITICAL FIX: QImage with numpy data can crash if numpy array is garbage collected
+                    # Must use .copy() to create a deep copy that Qt owns
+                    convert_to_Qt_format = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888).copy()
+                    
+                    if self.resolution:
+                        p = convert_to_Qt_format.scaled(self.resolution[0], self.resolution[1], Qt.KeepAspectRatio)
+                    else:
+                        p = convert_to_Qt_format
+                        
+                    # Performance Lock: Ensure we don't spam signals too fast for the UI
+                    if not hasattr(self, '_last_emit_time'):
+                        self._last_emit_time = 0
+                    
+                    import time
+                    current_time = time.time()
+                    if (current_time - self._last_emit_time) >= 0.038: # Max ~26 FPS for UI stability
+                        self.frame_signal.emit(convert_to_Qt_format)
+                        self._last_emit_time = current_time
+                    else:
+                        # Skip signal to save UI processing, object will be cleaned by GC
+                        pass
+                    
+                    # Force local cleanup
+                    del rgb_image
+                    
+                except Exception as e:
+                    print(f"[VIDEO THREAD] ❌ Error processing frame: {e}")
+                    import traceback
+                    traceback.print_exc()
 
-            # Limit FPS roughly
-            time.sleep(0.03) 
+            # Sync with video FPS to prevent "fast-forward" effect
+            # Delay is calculated based on video properties (usually ~0.033s for 30fps)
+            fps = self.fps if hasattr(self, 'fps') and self.fps > 0 else 30
+            delay = 1.0 / fps
+            
+            # Adjust sleep to account for processing time
+            # If processing took a long time, we sleep less.
+            elapsed = time.time() - current_time
+            sleep_time = max(0.001, delay - elapsed)
+            time.sleep(sleep_time) 
             
         cap.release()
 

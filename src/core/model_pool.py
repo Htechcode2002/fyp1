@@ -5,6 +5,8 @@ This significantly reduces GPU memory usage and improves performance.
 
 from ultralytics import YOLO
 import threading
+import torch
+import numpy as np
 
 
 class ModelPool:
@@ -14,6 +16,7 @@ class ModelPool:
     """
     _instance = None
     _lock = threading.Lock()
+    _model_lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
@@ -67,9 +70,8 @@ class ModelPool:
                 # CRITICAL FIX: Warmup model to trigger fuse() in a thread-safe context
                 # This prevents multiple threads from trying to fuse simultaneously
                 print("[MODEL POOL] 🔥 Warming up model (running first inference)...")
-                import numpy as np
                 dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
-                self._main_model.predict(dummy_frame, verbose=False, imgsz=640)
+                self._main_model.predict(dummy_frame, verbose=False, imgsz=960, half=torch.cuda.is_available())
                 print("[MODEL POOL] ✅ Model warmup complete")
 
             self._main_refs += 1
@@ -102,9 +104,8 @@ class ModelPool:
 
                     # Warmup to trigger fuse
                     print("[MODEL POOL] 🔥 Warming up fall model...")
-                    import numpy as np
                     dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
-                    self._fall_model.predict(dummy_frame, verbose=False, imgsz=640)
+                    self._fall_model.predict(dummy_frame, verbose=False, imgsz=960, half=torch.cuda.is_available())
                     print("[MODEL POOL] ✅ Fall model warmup complete")
                 except Exception as e:
                     print(f"[MODEL POOL] ❌ Failed to load fall model: {e}")
@@ -140,9 +141,8 @@ class ModelPool:
 
                     # Warmup to trigger fuse
                     print("[MODEL POOL] 🔥 Warming up mask model...")
-                    import numpy as np
                     dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
-                    self._mask_model.predict(dummy_frame, verbose=False, imgsz=640)
+                    self._mask_model.predict(dummy_frame, verbose=False, imgsz=960, half=torch.cuda.is_available())
                     print("[MODEL POOL] ✅ Mask model warmup complete")
                 except Exception as e:
                     print(f"[MODEL POOL] ❌ Failed to load mask model: {e}")
@@ -178,9 +178,8 @@ class ModelPool:
 
                     # Warmup to trigger fuse
                     print("[MODEL POOL] 🔥 Warming up pose model...")
-                    import numpy as np
                     dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
-                    self._pose_model.predict(dummy_frame, verbose=False, imgsz=640)
+                    self._pose_model.predict(dummy_frame, verbose=False, imgsz=640, half=torch.cuda.is_available())
                     print("[MODEL POOL] ✅ Pose model warmup complete")
                 except Exception as e:
                     print(f"[MODEL POOL] ❌ Failed to load pose model: {e}")

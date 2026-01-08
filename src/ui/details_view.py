@@ -453,23 +453,32 @@ class VideoDetailDialog(QDialog):
 
     # Duplicate methods removed - consolidated below
             
-    def set_frame(self, pixmap):
+    def set_frame(self, image):
+        # Image is now QImage, conversion to QPixmap must happen in UI thread
+        pixmap = QPixmap.fromImage(image)
+        
         # Store original size for scaling
         self.source_size = pixmap.size()
         
         # Scale pixmap to fit label while maintaining aspect ratio
         label_size = self.video_label.size()
         if label_size.isEmpty():
-            return
+            # If label size not ready, use a default proportional size
+            scaled_pixmap = pixmap.scaledToWidth(1280, Qt.SmoothTransformation)
+        else:
+            scaled_pixmap = pixmap.scaled(label_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             
-        scaled = pixmap.scaled(label_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.video_label.setPixmap(scaled)
+        self.video_label.setPixmap(scaled_pixmap)
+        
+        # If we have an overlay widget, update it too
+        if hasattr(self, 'overlay_widget'):
+            self.overlay_widget.setVideoSize(self.source_size)
         
         # Calculate Geometry of the actual image within the label
         w_label = label_size.width()
         h_label = label_size.height()
-        w_pix = scaled.width()
-        h_pix = scaled.height()
+        w_pix = scaled_pixmap.width()
+        h_pix = scaled_pixmap.height()
         
         # Center offset
         off_x = (w_label - w_pix) // 2
@@ -594,11 +603,23 @@ class VideoDetailDialog(QDialog):
         if right_value:
             right_value.setText(str(total_right))
 
-        self.table.setRowCount(0) # Clear existing rows
+        # Update table rows if needed
+        # We only really need to update if counts changed (already throttled by signal)
+        # But we also want to avoid flickering
+        
+        # Check if we need to rebuild the table (number of lines changed)
+        line_count_items = [item for key, item in counts.items() if key != "_analytics"]
+        if self.table.rowCount() != len(line_count_items):
+            self.table.setRowCount(0)
+            for i in range(len(line_count_items)):
+                self.table.insertRow(i)
+                for j in range(5):
+                    self.table.setItem(i, j, QTableWidgetItem(""))
 
         import datetime
         now_str = datetime.datetime.now().strftime("%H:%M:%S")
 
+        row = 0
         for key, data in counts.items():
             # Skip analytics metadata
             if key == "_analytics":
@@ -608,22 +629,21 @@ class VideoDetailDialog(QDialog):
                 line_idx = int(key)
             except (ValueError, TypeError):
                 continue
+            
+            if row < self.table.rowCount():
+                # Line Name (e.g., "Line 1")
+                self.table.item(row, 0).setText(now_str)
+                self.table.item(row, 1).setText(f"Line {line_idx+1}")
 
-            row = self.table.rowCount()
-            self.table.insertRow(row)
+                # Counts
+                left = data.get("left", 0)
+                right = data.get("right", 0)
+                total = data.get("total", 0)
 
-            # Line Name (e.g., "Line 1")
-            self.table.setItem(row, 0, QTableWidgetItem(now_str))
-            self.table.setItem(row, 1, QTableWidgetItem(f"Line {line_idx+1}"))
-
-            # Counts
-            left = data.get("left", 0)
-            right = data.get("right", 0)
-            total = data.get("total", 0)
-
-            self.table.setItem(row, 2, QTableWidgetItem(str(left)))
-            self.table.setItem(row, 3, QTableWidgetItem(str(right)))
-            self.table.setItem(row, 4, QTableWidgetItem(str(total)))
+                self.table.item(row, 2).setText(str(left))
+                self.table.item(row, 3).setText(str(right))
+                self.table.item(row, 4).setText(str(total))
+                row += 1
 
     def eventFilter(self, source, event):
         return super().eventFilter(source, event)

@@ -55,10 +55,10 @@ class VideoDetector:
 
         # Optimization: Frame Skipping & Frequency
         self.frame_count = 0
-        self.inference_freq = 1 # Run inference every frame (No skipping - consistent detection across all GPUs)
+        self.inference_freq = 1 # Back to 1 for maximum precision (every frame)
         self.heatmap_update_freq = 5 # Update heatmap overlay every 5 frames
         self.cached_heatmap_overlay = None
-        self.face_analysis_freq = 10 # Run face analysis every 10 frames (CRITICAL: reduces blocking)
+        self.face_analysis_freq = 15 # Run face analysis every 15 frames (reduced from 10 for stability)
 
         # Prediction caching for skipped frames
         self.last_detections = []
@@ -619,6 +619,30 @@ class VideoDetector:
 
         self.frame_count += 1
 
+        # CRITICAL: GPU Memory Management - Clear CUDA cache periodically
+        # This prevents GPU memory from growing unbounded and causing crashes
+        if self.frame_count % 500 == 0:  # Every ~17 seconds at 30 FPS
+            try:
+                import torch
+                import gc
+                if torch.cuda.is_available():
+                    # Get memory stats before cleanup
+                    allocated = torch.cuda.memory_allocated() / 1024**2
+                    reserved = torch.cuda.memory_reserved() / 1024**2
+                    
+                    # Force garbage collection first
+                    gc.collect()
+                    # Clear unused GPU memory
+                    torch.cuda.empty_cache()
+                    
+                    # Log memory usage
+                    if allocated > 2000:  # Warning if > 2GB allocated
+                        print(f"⚠️ [GPU] High memory usage: {allocated:.0f}MB allocated, {reserved:.0f}MB reserved")
+                    else:
+                        print(f"[GPU] Memory: {allocated:.0f}MB allocated, {reserved:.0f}MB reserved (cache/gc cleared)")
+            except Exception as e:
+                pass  # Ignore errors if torch not available or CUDA not working
+
         # CRITICAL: Monitor cache sizes to detect memory leaks
         if self.frame_count % 300 == 0:  # Check every 300 frames (every 10 seconds at 30 FPS)
             cache_sizes = {
@@ -644,20 +668,19 @@ class VideoDetector:
         current_counts = copy.deepcopy(self.line_counts)
         current_time = time.time()
         
-        # Performance optimization: fixed size
-        imgsz = 640
+        # PERFORMANCE OPTIMIZATION: Use higher resolution for 4090 power
+        imgsz = 960
         # Lower confidence threshold to reduce GPU floating-point precision differences
         conf_threshold = 0.15  # Default is 0.25, lowering to catch edge cases
         
         if tracking_enabled:
             # Persist=True for tracking
             # Classes: 0=Person, 24=Backpack, 26=Handbag
-            # half=False forces FP32 precision for consistent results across different GPUs
-            # print(f"[DEBUG] Running track... {self.frame_count}")
-            results = self.model.track(frame, persist=True, verbose=False, classes=[0, 24, 26], tracker=self.tracker, imgsz=imgsz, conf=conf_threshold, half=False)
+            # half=True uses FP16 precision - much faster and uses 50% less VRAM on RTX 4090
+            results = self.model.track(frame, persist=True, verbose=False, classes=[0, 24, 26], tracker=self.tracker, imgsz=imgsz, conf=conf_threshold, half=True)
         else:
             # Predict only (Detection) - No IDs
-            results = self.model.predict(frame, verbose=False, classes=[0, 24, 26], imgsz=imgsz, conf=conf_threshold, half=False)
+            results = self.model.predict(frame, verbose=False, classes=[0, 24, 26], imgsz=imgsz, conf=conf_threshold, half=True)
 
         # Run pose detection for people who don't have cached keypoints yet
         # This helps with accurate clothing region detection
@@ -677,7 +700,7 @@ class VideoDetector:
 
             # Run pose detection if there are people needing it
             if people_needing_pose:
-                pose_results = self.pose_model(frame, verbose=False)
+                pose_results = self.pose_model(frame, verbose=False, half=True)
                 # print(f"[POSE] Detected keypoints for {len(people_needing_pose)} new people")
 
         if not results:
@@ -843,40 +866,41 @@ class VideoDetector:
                         self.seen_track_ids.add(track_id)
 
                         # --- HEATMAP ACCUMULATION ---
-                        try:
-                            # Use 1/4 scale for performance
-                            h_img, w_img = frame.shape[:2]
-                            scale_factor = 0.25
-                            small_h, small_w = int(h_img * scale_factor), int(w_img * scale_factor)
+                        if self.heatmap_enabled:
+                            try:
+                                # Use 1/4 scale for performance
+                                h_img, w_img = frame.shape[:2]
+                                scale_factor = 0.25
+                                small_h, small_w = int(h_img * scale_factor), int(w_img * scale_factor)
 
-                            if self.heatmap_accumulator is None:
-                                self.heatmap_accumulator = np.zeros((small_h, small_w), dtype=np.float32)
-                            
-                            # Simple circle increment
-                            # Scale coordinates to small map
-                            foot_x_small = int(cx * scale_factor)
-                            foot_y_small = int(y2 * scale_factor)
-                            curr_foot_small = (foot_x_small, foot_y_small)
-                            
-                            # Boundary check
-                            if 0 <= foot_x_small < small_w and 0 <= foot_y_small < small_h:
-                                # 1. Always add a spot at current position (for pauses)
-                                self.heatmap_accumulator[foot_y_small, foot_x_small] += 5.0
+                                if self.heatmap_accumulator is None:
+                                    self.heatmap_accumulator = np.zeros((small_h, small_w), dtype=np.float32)
                                 
-                                # 2. Draw Line from previous position (for smooth trails)
-                                prev_foot_small = self.track_feet.get(track_id)
-                                if prev_foot_small:
-                                    # Draw line on a temp mask and add it.
-                                    mask = np.zeros_like(self.heatmap_accumulator)
-                                    cv2.line(mask, prev_foot_small, curr_foot_small, (1), thickness=2) # Thinner line for small map
-                                    self.heatmap_accumulator += (mask * 5.0) 
+                                # Simple circle increment
+                                # Scale coordinates to small map
+                                foot_x_small = int(cx * scale_factor)
+                                foot_y_small = int(y2 * scale_factor)
+                                curr_foot_small = (foot_x_small, foot_y_small)
                                 
-                                # Update history
-                                self.track_feet[track_id] = curr_foot_small
+                                # Boundary check
+                                if 0 <= foot_x_small < small_w and 0 <= foot_y_small < small_h:
+                                    # 1. Always add a spot at current position (for pauses)
+                                    self.heatmap_accumulator[foot_y_small, foot_x_small] += 5.0
+                                    
+                                    # 2. Draw Line from previous position (for smooth trails)
+                                    prev_foot_small = self.track_feet.get(track_id)
+                                    if prev_foot_small:
+                                        # Draw line on a temp mask and add it.
+                                        mask = np.zeros_like(self.heatmap_accumulator)
+                                        cv2.line(mask, prev_foot_small, curr_foot_small, (1), thickness=2) # Thinner line for small map
+                                        self.heatmap_accumulator += (mask * 5.0) 
+                                    
+                                    # Update history
+                                    self.track_feet[track_id] = curr_foot_small
 
-                        except Exception as e:
-                            # print(f"heatmap error: {e}")
-                            pass
+                            except Exception as e:
+                                # print(f"heatmap error: {e}")
+                                pass
                     
                         # --- LINE COUNTING ---
                         # Update History
@@ -1028,28 +1052,49 @@ class VideoDetector:
         # Clean up all caches for IDs that are no longer active
         # Keep cache for recently seen IDs (for re-identification)
         all_tracked_ids = set(self.color_cache.keys()) | set(self.face_cache.keys()) | set(self.mask_cache.keys())
-        inactive_ids = all_tracked_ids - self.seen_track_ids
-        for tid in inactive_ids:
-            # Remove if not seen in this session
-            # Color cache
-            if tid in self.color_cache:
-                del self.color_cache[tid]
-            if tid in self.color_confirmed:
-                del self.color_confirmed[tid]
-            # Face cache
-            if tid in self.face_cache:
-                del self.face_cache[tid]
-            if tid in self.face_confirmed:
-                del self.face_confirmed[tid]
-            if tid in self.face_samples:
-                del self.face_samples[tid]
-            # Mask cache
-            if tid in self.mask_cache:
-                del self.mask_cache[tid]
-            if tid in self.mask_confirmed:
-                del self.mask_confirmed[tid]
-            if tid in self.mask_samples:
-                del self.mask_samples[tid]
+        # FIX: Clean up if not seen in CURRENT frame (or seen_track_ids which grows forever)
+        # Actually, let's keep them in cache but limit total cache size
+        inactive_ids = all_tracked_ids - current_frame_ids
+        
+        # Limit cache size to prevent memory leaks
+        # If cache > 100 entries, start removing oldest inactive IDs
+        if len(inactive_ids) > 100:
+            # Sort by ID or just take a slice
+            ids_to_remove = list(inactive_ids)[:len(inactive_ids) - 50]
+            for tid in ids_to_remove:
+                # Color cache
+                if tid in self.color_cache:
+                    del self.color_cache[tid]
+                if tid in self.color_confirmed:
+                    del self.color_confirmed[tid]
+                # Face cache
+                if tid in self.face_cache:
+                    del self.face_cache[tid]
+                if tid in self.face_confirmed:
+                    del self.face_confirmed[tid]
+                if tid in self.face_samples:
+                    del self.face_samples[tid]
+                # Mask cache
+                if tid in self.mask_cache:
+                    del self.mask_cache[tid]
+                if tid in self.mask_confirmed:
+                    del self.mask_confirmed[tid]
+                if tid in self.mask_samples:
+                    del self.mask_samples[tid]
+                # Handbag cache
+                if tid in self.handbag_cache:
+                    del self.handbag_cache[tid]
+                if tid in self.handbag_confirmed:
+                    del self.handbag_confirmed[tid]
+                # Feet history
+                if tid in self.track_feet:
+                    del self.track_feet[tid]
+                # History
+                if tid in self.track_history:
+                    del self.track_history[tid]
+                # ReID/Multi-cam features
+                if hasattr(self, 'reid_features') and tid in self.reid_features:
+                    del self.reid_features[tid]
 
         # Fall Detection (if enabled) - with 2 second threshold
         # Only detect falls where there are detected people
@@ -1097,6 +1142,11 @@ class VideoDetector:
                             for fall_box in fall_boxes:
                                 fx1, fy1, fx2, fy2 = fall_box.xyxy[0].cpu().numpy()
                                 fall_conf = float(fall_box.conf[0].cpu().numpy())
+                                
+                                # OPTIMIZATION: Skip low confidence detections (reduce false positives)
+                                if fall_conf < 0.5:  # Increased from default ~0.25
+                                    continue
+                                
                                 box = [int(fx1), int(fy1), int(fx2), int(fy2)]
 
                                 # Find the person this fall belongs to (highest IoU)
@@ -1108,8 +1158,8 @@ class VideoDetector:
                                         best_iou = iou
                                         best_match_track_id = person_data['track_id']
 
-                                # Only add if overlap is good enough (30%+)
-                                if best_iou > 0.3:
+                                # Only add if overlap is good enough (50%+ to reduce false positives)
+                                if best_iou > 0.5:
                                     current_fall_boxes.append({
                                         'box': box,
                                         'conf': fall_conf,
@@ -1179,7 +1229,7 @@ class VideoDetector:
                                 'box': box,
                                 'track_id': track_id
                             }
-                            print(f"[NEW FALL DETECTED] track_id={track_id}, centroid={centroid}")
+                            # Removed verbose logging to reduce console spam
                     else:
                         # No track_id available - fall back to position-based matching (legacy behavior)
                         matched = False
@@ -1330,7 +1380,7 @@ class VideoDetector:
 
                 if people_to_detect:
                     # Run mask detection on the frame
-                    mask_results = self.mask_model(frame, verbose=False)
+                    mask_results = self.mask_model(frame, verbose=False, half=True)
 
                     # Extract mask detections
                     mask_detections = []
@@ -2031,6 +2081,10 @@ class VideoDetector:
         self.handbag_cache.clear()  # Clear handbag detection cache
         self.handbag_confirmed.clear()  # Clear handbag confirmation status
         self.track_history.clear()  # Clear trajectory lines on video loop
+        
+        # FIX: Clear ReID features to prevent memory leak on loop
+        if hasattr(self, 'reid_features'):
+            self.reid_features.clear()
 
         print(f"[DETECTOR] 🔄 Analytics reset for video loop - video_id={self.video_id}")
 

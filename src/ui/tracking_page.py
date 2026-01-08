@@ -342,7 +342,7 @@ class CrossCameraTrackingPage(QWidget):
                     # 转换为QPixmap
                     height, width, channel = target_img.shape
                     bytes_per_line = 3 * width
-                    q_img = QImage(target_img.data, width, height, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
+                    q_img = QImage(target_img.data, width, height, bytes_per_line, QImage.Format_RGB888).rgbSwapped().copy()
                     pixmap = QPixmap.fromImage(q_img)
 
                     # 缩放并显示
@@ -442,7 +442,7 @@ class CrossCameraTrackingPage(QWidget):
         if crop.size > 0:
             height, width, channel = crop.shape
             bytes_per_line = 3 * width
-            q_img = QImage(crop.data, width, height, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
+            q_img = QImage(crop.data, width, height, bytes_per_line, QImage.Format_RGB888).rgbSwapped().copy()
             pixmap = QPixmap.fromImage(q_img)
             scaled = pixmap.scaled(80, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 

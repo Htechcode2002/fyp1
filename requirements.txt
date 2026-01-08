@@ -1,7 +1,11 @@
 # Core dependencies
 PySide6>=6.0.0
 opencv-python>=4.5.0
-numpy>=1.21.0
+numpy<1.25.0
+lap
+FuzzyTM
+blosc2
+sentencepiece
 
 # YOLO and Deep Learning (Pinned versions for consistent detection results)
 ultralytics==8.3.246

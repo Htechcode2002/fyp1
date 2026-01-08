@@ -1,7 +1,7 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                                QPushButton, QFrame, QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy)
-from PySide6.QtCore import Qt, Signal, QPoint, QRect, QTimer
-from PySide6.QtGui import QPainter, QPen, QColor, QPolygon
+from PySide6.QtCore import Qt, Signal, QPoint, QRect, QTimer, QSize
+from PySide6.QtGui import QPainter, QPen, QColor, QPolygon, QPixmap, QImage
 from src.core.video import VideoThread
 
 class VideoCard(QFrame):
@@ -103,7 +103,9 @@ class VideoCard(QFrame):
         if self.thread:
             self.thread.stop()
 
-    def set_frame(self, pixmap):
+    def set_frame(self, image):
+        # Image is now QImage, must convert to QPixmap in GUI thread for safety
+        pixmap = QPixmap.fromImage(image)
         # Scale to fit label height, keep aspect ratio
         scaled = pixmap.scaledToHeight(200, Qt.SmoothTransformation)
         self.video_label.setPixmap(scaled)
@@ -218,6 +220,9 @@ class OverlayWidget(QWidget):
         
         # Flashing State
         self.flashing_lines = set() # Set of line indices currently flashing
+        
+        # Video Source Resolution (for coordinate mapping)
+        self.video_size = QSize(1280, 720) # Default
 
     def set_mode(self, mode):
         self.mode = mode
@@ -225,6 +230,12 @@ class OverlayWidget(QWidget):
         self.temp_point = None
         self.setCursor(Qt.CrossCursor if mode != "NONE" else Qt.ArrowCursor)
         self.update()
+
+    def setVideoSize(self, size):
+        """Set the source video resolution for proper coordinate mapping."""
+        if size and isinstance(size, QSize):
+            self.video_size = size
+            self.update()
 
     def add_line(self, line):
         self.lines.append(line)

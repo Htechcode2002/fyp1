@@ -1,5 +1,11 @@
 import sys
 import os
+
+# CRITICAL STABILITY FIXES: Mandatory for modern AI apps on Windows
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE" # Prevent crashes from duplicate MKL libraries
+os.environ["OMP_NUM_THREADS"] = "1"        # Prevent threading overloads in nested dependencies
+os.environ["QT_API"] = "pyside6"
+
 import site
 
 # Fix for ONNX Runtime GPU dependencies (CUDA/cuDNN)
@@ -41,6 +47,34 @@ from PySide6.QtWidgets import QApplication
 from src.ui.main_window import MainWindow
 from src.core.database import DatabaseManager
 
+import traceback
+
+def exception_hook(exctype, value, tb):
+    """Global exception handler to catch and log all unhandled exceptions."""
+    error_msg = ''.join(traceback.format_exception(exctype, value, tb))
+    print("\n" + "="*60)
+    print("❌ UNHANDLED EXCEPTION:")
+    print("="*60)
+    print(error_msg)
+    print("="*60 + "\n")
+    
+    # Also write to file for debugging
+    try:
+        with open("crash_log.txt", "a", encoding="utf-8") as f:
+            import datetime
+            f.write(f"\n{'='*60}\n")
+            f.write(f"Crash at: {datetime.datetime.now()}\n")
+            f.write(error_msg)
+            f.write(f"{'='*60}\n")
+    except:
+        pass
+    
+    # Call the default handler
+    sys.__excepthook__(exctype, value, tb)
+
+# Install the exception hook
+sys.excepthook = exception_hook
+
 def main():
     # Ensure DB tables exist
     db = DatabaseManager()
@@ -49,7 +83,21 @@ def main():
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    sys.exit(app.exec())
+    
+    # Run with exception handling
+    try:
+        sys.setrecursionlimit(2000) # Increase recursion limit for safety
+        sys.exit(app.exec())
+    except Exception as e:
+        print(f"❌ Application crashed: {e}")
+        traceback.print_exc()
+        
+        # Ensure log file is flushed
+        with open("crash_log.txt", "a") as f:
+            f.write(f"\nCRITICAL: Application exited due to: {e}\n")
+            traceback.print_exc(file=f)
+            f.flush()
+        raise
 
 if __name__ == "__main__":
     main()
