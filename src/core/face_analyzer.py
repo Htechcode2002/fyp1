@@ -56,8 +56,9 @@ class FaceAnalyzer:
                 name='buffalo_l',
                 providers=['CUDAExecutionProvider', 'CPUExecutionProvider']
             )
-            # Use standard det_size (640x640) for better accuracy on 4090
-            self.app.prepare(ctx_id=0, det_size=(640, 640))
+            # OPTIMIZATION: Use 480x480 det_size for balanced accuracy/speed
+            # (Reduces GPU load by ~44% vs 640x640, minimal accuracy loss)
+            self.app.prepare(ctx_id=0, det_size=(480, 480))
             self.enabled = True
             self._initialized = True
             print("InsightFace model loaded successfully!")

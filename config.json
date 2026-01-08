@@ -7,7 +7,7 @@
         "database": "test"
     },
     "yolo": {
-        "model_path": "models\\yolov8m.pt"
+        "model_path": "models\\yolov8n.pt"
     },
     "thresholds": {
         "warning": 20,
@@ -15,21 +15,14 @@
     },
     "video_sources": [
         {
-            "id": "47abe01b",
-            "name": "Source 47abe01b",
+            "id": "3add2383",
+            "name": "Source 3add2383",
             "location": "",
-            "type": "cctv",
-            "path": "rtsp://admin:Charles_20022002@192.168.0.79:554/cam/realmonitor?channel=1&subtype=1",
+            "type": "file",
+            "path": "C:/Users/Charles/Desktop/footage/pedestrain2.mp4",
             "danger_threshold": 100,
             "loitering_threshold": 5,
-            "fall_threshold": 2,
-            "rtsp_config": {
-                "ip": "192.168.0.79",
-                "username": "admin",
-                "password": "Charles_20022002",
-                "channel": "1",
-                "subtype": 1
-            }
+            "fall_threshold": 2
         }
     ]
 }

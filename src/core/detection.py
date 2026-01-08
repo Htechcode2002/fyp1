@@ -52,13 +52,16 @@ class VideoDetector:
         self.model_pool = get_model_pool()
         self.model = None
         self.display_mode = "dot"  # Display mode: "dot" (head dot only) or "box" (bounding box)
+        self.trajectory_enabled = True  # Show trajectory lines (can be disabled for performance)
+        self.show_debug_boxes = False  # OPTIMIZATION: Disable debug boxes (shirt/mask/pose) to reduce lag
 
         # Optimization: Frame Skipping & Frequency
         self.frame_count = 0
-        self.inference_freq = 2 # Process every 2nd frame for real-time streams (reduces lag by 50%)
+        self.inference_freq = 1 # Process every frame for smooth tracking (set to 2 for better performance)
         self.heatmap_update_freq = 5 # Update heatmap overlay every 5 frames
         self.cached_heatmap_overlay = None
-        self.face_analysis_freq = 30 # Run face analysis every 30 frames (reduced for performance)
+        # OPTIMIZATION: Increased to 45 frames since 1-confirmation caching handles most cases
+        self.face_analysis_freq = 45 # Run face analysis every 45 frames (with caching)
 
         # Prediction caching for skipped frames
         self.last_detections = []
@@ -94,6 +97,7 @@ class VideoDetector:
         # Face Analysis Caching (1-confirmation) - OPTIMIZED
         self.face_cache = {} # track_id -> {gender, age} (final confirmed)
         self.face_confirmed = {} # track_id -> bool (True if confirmed - stop detecting)
+        self.face_attempts = {} # track_id -> int (number of failed attempts)
 
         # Mask Detection Caching (1-confirmation) - OPTIMIZED
         self.mask_cache = {} # track_id -> mask_status_string (final confirmed)
@@ -102,6 +106,10 @@ class VideoDetector:
         # Handbag Detection Tracking (1-confirmation caching)
         self.handbag_cache = {} # track_id -> 1 if has handbag, 0 if no handbag (final confirmed)
         self.handbag_confirmed = {} # track_id -> bool (True if confirmed - stop detecting)
+
+        # Backpack Detection Tracking (1-confirmation caching)
+        self.backpack_cache = {} # track_id -> 1 if has backpack, 0 if no backpack (final confirmed)
+        self.backpack_confirmed = {} # track_id -> bool (True if confirmed - stop detecting)
 
         # Line crossing flash effect
         self.line_flash = {} # line_idx -> timestamp of last crossing
@@ -242,12 +250,17 @@ class VideoDetector:
         if v < 70:
             return "Black"
 
-        # White - high brightness, low saturation
-        if s < 40 and v > 190:
+        # White - high brightness, low saturation (OPTIMIZED for better accuracy)
+        # Use gradient thresholds: brighter = more tolerant to saturation
+        if v > 200 and s < 60:  # Very bright → definitely white
+            return "White"
+        if v > 160 and s < 40:  # Bright → white if very low saturation
+            return "White"
+        if v > 140 and s < 25:  # Medium-bright → white if extremely low saturation
             return "White"
 
-        # Gray - low saturation, medium brightness
-        if s < 60:
+        # Gray - low saturation, medium brightness (OPTIMIZED: exclude white range)
+        if s < 60 and 70 <= v <= 140:
             return "Gray"
 
         # ========== CHROMATIC COLORS (High Saturation) ==========
@@ -621,7 +634,8 @@ class VideoDetector:
 
         # CRITICAL: GPU Memory Management - Clear CUDA cache periodically
         # This prevents GPU memory from growing unbounded and causing crashes
-        if self.frame_count % 500 == 0:  # Every ~17 seconds at 30 FPS
+        # OPTIMIZATION: Reduced from 500 to 300 for more frequent cleanup
+        if self.frame_count % 300 == 0:  # Every ~10 seconds at 30 FPS
             try:
                 import torch
                 import gc
@@ -650,6 +664,7 @@ class VideoDetector:
                 'face_cache': len(self.face_cache),
                 'mask_cache': len(self.mask_cache),
                 'handbag_cache': len(self.handbag_cache),
+                'backpack_cache': len(self.backpack_cache),
                 'track_history': len(self.track_history),
                 'seen_track_ids': len(self.seen_track_ids)
             }
@@ -684,9 +699,10 @@ class VideoDetector:
 
         # Run pose detection for people who don't have cached keypoints yet
         # This helps with accurate clothing region detection
+        # OPTIMIZATION: Only run pose detection for people without confirmed color
         pose_results = None
         if self.pose_model is not None and tracking_enabled:
-            # Collect track_ids that need pose detection
+            # Collect track_ids that need pose detection (not cached AND not color-confirmed)
             people_needing_pose = []
             for result in results:
                 if result.boxes is not None:
@@ -695,12 +711,14 @@ class VideoDetector:
                         ids = boxes.id.cpu().numpy().astype(int)
                         cls_ids = boxes.cls.cpu().numpy().astype(int)
                         for tid, cls_id in zip(ids, cls_ids):
-                            if cls_id == 0 and tid not in self.pose_cache:  # Person and not cached
+                            # Only run pose if: Person AND (no pose cache OR color not confirmed)
+                            if cls_id == 0 and tid not in self.pose_cache and not self.color_confirmed.get(tid, False):
                                 people_needing_pose.append(tid)
 
             # Run pose detection if there are people needing it
             if people_needing_pose:
-                pose_results = self.pose_model(frame, verbose=False, half=True)
+                # OPTIMIZATION: Use smaller imgsz for pose (480 vs 640) - still accurate for keypoints
+                pose_results = self.pose_model(frame, verbose=False, half=True, imgsz=480)
                 # print(f"[POSE] Detected keypoints for {len(people_needing_pose)} new people")
 
         if not results:
@@ -720,6 +738,7 @@ class VideoDetector:
         person_detections = []  # list of {track_id, box, centroid} - only unconfirmed people
         handbag_detections = []  # list of {box, centroid}
 
+        # First pass: Collect unconfirmed people
         for result in results:
             boxes = result.boxes
             if tracking_enabled and boxes.id is not None:
@@ -729,27 +748,36 @@ class VideoDetector:
             cls_ids = boxes.cls.cpu().numpy().astype(int)
 
             for box, track_id, cls_id in zip(boxes, ids, cls_ids):
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-
                 if cls_id == 0:  # Person
                     # OPTIMIZATION: Only add to detection list if NOT confirmed yet
                     if track_id is not None and not self.handbag_confirmed.get(track_id, False):
+                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
                         person_detections.append({
                             'track_id': track_id,
                             'box': (x1, y1, x2, y2),
                             'centroid': (cx, cy)
                         })
-                elif cls_id == 26:  # Handbag (class 26 in COCO)
-                    # Only collect handbags if we have unconfirmed people
-                    handbag_detections.append({
-                        'box': (x1, y1, x2, y2),
-                        'centroid': (cx, cy)
-                    })
 
-        # Associate handbags with nearby persons (ONLY for unconfirmed people)
-        # Skip association if no unconfirmed people (performance optimization)
+        # Second pass: Only collect handbags if we have unconfirmed people (saves processing)
         if person_detections:
+            # OPTIMIZATION: Skip handbag detection if all people are already confirmed
+            for result in results:
+                boxes = result.boxes
+                cls_ids = boxes.cls.cpu().numpy().astype(int)
+
+                for box, cls_id in zip(boxes, cls_ids):
+                    if cls_id == 26:  # Handbag (class 26 in COCO)
+                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                        handbag_detections.append({
+                            'box': (x1, y1, x2, y2),
+                            'centroid': (cx, cy)
+                        })
+
+        # Associate handbags with nearby persons (ONLY if we have unconfirmed people AND handbags)
+        # Skip association if no unconfirmed people (performance optimization)
+        if person_detections and handbag_detections:
             for person in person_detections:
                 track_id = person['track_id']
                 if track_id is None:
@@ -781,6 +809,82 @@ class VideoDetector:
                     print(f"[HANDBAG CONFIRMED] Track ID {track_id}: Has handbag")
                 else:
                     print(f"[HANDBAG CONFIRMED] Track ID {track_id}: No handbag")
+
+        # === BACKPACK DETECTION: First pass to collect all detections ===
+        # OPTIMIZATION: Only detect for people who DON'T have confirmed backpack status
+        person_detections_bp = []  # list of {track_id, box, centroid} - only unconfirmed people
+        backpack_detections = []  # list of {box, centroid}
+
+        # First pass: Collect unconfirmed people
+        for result in results:
+            boxes = result.boxes
+            if tracking_enabled and boxes.id is not None:
+                ids = boxes.id.cpu().numpy().astype(int)
+            else:
+                ids = [None] * len(boxes)
+            cls_ids = boxes.cls.cpu().numpy().astype(int)
+
+            for box, track_id, cls_id in zip(boxes, ids, cls_ids):
+                if cls_id == 0:  # Person
+                    # OPTIMIZATION: Only add to detection list if NOT confirmed yet
+                    if track_id is not None and not self.backpack_confirmed.get(track_id, False):
+                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                        person_detections_bp.append({
+                            'track_id': track_id,
+                            'box': (x1, y1, x2, y2),
+                            'centroid': (cx, cy)
+                        })
+
+        # Second pass: Only collect backpacks if we have unconfirmed people (saves processing)
+        if person_detections_bp:
+            # OPTIMIZATION: Skip backpack detection if all people are already confirmed
+            for result in results:
+                boxes = result.boxes
+                cls_ids = boxes.cls.cpu().numpy().astype(int)
+
+                for box, cls_id in zip(boxes, cls_ids):
+                    if cls_id == 24:  # Backpack (class 24 in COCO)
+                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+                        backpack_detections.append({
+                            'box': (x1, y1, x2, y2),
+                            'centroid': (cx, cy)
+                        })
+
+        # Associate backpacks with nearby persons (ONLY if we have unconfirmed people AND backpacks)
+        if person_detections_bp and backpack_detections:
+            for person in person_detections_bp:
+                track_id = person['track_id']
+                if track_id is None:
+                    continue
+
+                px, py = person['centroid']
+                p_x1, p_y1, p_x2, p_y2 = person['box']
+
+                # Check for nearby backpacks (within reasonable distance)
+                has_backpack = 0
+                for backpack in backpack_detections:
+                    bx, by = backpack['centroid']
+
+                    # Calculate distance between person and backpack
+                    distance = np.sqrt((px - bx)**2 + (py - by)**2)
+
+                    # Check if backpack is near person (distance threshold)
+                    person_height = p_y2 - p_y1
+                    max_distance = person_height * 0.8  # Backpack within 80% of person height
+
+                    if distance < max_distance:
+                        has_backpack = 1
+                        break
+
+                # Cache the result and CONFIRM - stop future detection for this track_id
+                self.backpack_cache[track_id] = has_backpack
+                self.backpack_confirmed[track_id] = True  # CONFIRMED - stop detecting
+                if has_backpack:
+                    print(f"[BACKPACK CONFIRMED] Track ID {track_id}: Has backpack")
+                else:
+                    print(f"[BACKPACK CONFIRMED] Track ID {track_id}: No backpack")
 
         for result in results:
             boxes = result.boxes
@@ -955,7 +1059,12 @@ class VideoDetector:
                                         if track_id is not None and track_id in self.handbag_cache:
                                             handbag_val = self.handbag_cache[track_id]
 
-                                        print(f"[DEBUG] Line crossing - track_id: {track_id}, mask_val: {mask_val}, handbag: {handbag_val}")
+                                        # Get Backpack Status from cache if available
+                                        backpack_val = 0
+                                        if track_id is not None and track_id in self.backpack_cache:
+                                            backpack_val = self.backpack_cache[track_id]
+
+                                        print(f"[DEBUG] Line crossing - track_id: {track_id}, mask_val: {mask_val}, handbag: {handbag_val}, backpack: {backpack_val}")
 
                                         self.db.insert_event(
                                             video_id=self.video_id,
@@ -967,7 +1076,8 @@ class VideoDetector:
                                             gender=gender_val,
                                             age=age_val,
                                             mask_status=mask_val,
-                                            handbag=handbag_val
+                                            handbag=handbag_val,
+                                            backpack=backpack_val
                                         )
                                     except Exception as e:
                                         print(f"DB Log Error: {e}")
@@ -1072,6 +1182,8 @@ class VideoDetector:
                     del self.face_cache[tid]
                 if tid in self.face_confirmed:
                     del self.face_confirmed[tid]
+                if tid in self.face_attempts:
+                    del self.face_attempts[tid]
                 if tid in self.face_samples:
                     del self.face_samples[tid]
                 # Mask cache
@@ -1111,7 +1223,8 @@ class VideoDetector:
 
                 # Only run fall detection if there are people in the frame
                 if len(person_boxes_with_ids) > 0:
-                    fall_results = self.fall_model(frame, verbose=False)
+                    # OPTIMIZATION: Use half precision (FP16) and smaller imgsz for faster inference
+                    fall_results = self.fall_model(frame, verbose=False, half=True, imgsz=480)
                     current_fall_boxes = []
 
                     # Helper function to calculate IoU (Intersection over Union)
@@ -1310,6 +1423,7 @@ class VideoDetector:
                         px1, py1, px2, py2 = det['box']
                         person_center_x = (px1 + px2) / 2
                         person_center_y = (py1 + py2) / 2
+                        person_height = py2 - py1
                         tid = det.get('id')
 
                         # Find closest face to this person
@@ -1329,8 +1443,10 @@ class VideoDetector:
                                 min_dist = dist
                                 closest_face = face
 
-                        # FaceAnalyzer already filtered, so if we found a face, it's valid
-                        if closest_face and tid is not None and not self.face_confirmed.get(tid, False):
+                        # CRITICAL FIX: Only accept face if distance is reasonable (< 50% of person height)
+                        # This prevents matching one face to multiple distant people
+                        max_distance = person_height * 0.5  # Face must be within 50% of person height
+                        if closest_face and min_dist < max_distance and tid is not None and not self.face_confirmed.get(tid, False):
                             gender = closest_face['gender']
                             age = closest_face['age']
 
@@ -1340,6 +1456,16 @@ class VideoDetector:
                             det['gender'] = gender
                             det['age'] = age
                             print(f"[FACE CONFIRMED] Track ID {tid}: {gender}, Age {age}")
+                        elif tid is not None and not self.face_confirmed.get(tid, False):
+                            # Failed to match face - increment attempts counter
+                            if tid not in self.face_attempts:
+                                self.face_attempts[tid] = 0
+                            self.face_attempts[tid] += 1
+
+                            # After 3 failed attempts, mark as confirmed with "Unknown"
+                            if self.face_attempts[tid] >= 3:
+                                self.face_confirmed[tid] = True  # Stop trying
+                                print(f"[FACE] Track ID {tid}: Failed to detect face after 3 attempts, skipping")
 
             except Exception as e:
                 print(f"Face analysis error: {e}")
@@ -1379,8 +1505,8 @@ class VideoDetector:
                 people_to_detect = [det for det in detections if det['cls_id'] == 0 and not self.mask_confirmed.get(det.get('id'), False)]
 
                 if people_to_detect:
-                    # Run mask detection on the frame
-                    mask_results = self.mask_model(frame, verbose=False, half=True)
+                    # OPTIMIZATION: Use smaller imgsz (480) for mask detection
+                    mask_results = self.mask_model(frame, verbose=False, half=True, imgsz=480)
 
                     # Extract mask detections
                     mask_detections = []
@@ -1480,6 +1606,10 @@ class VideoDetector:
             dwell_time = det.get("dwell_time", 0)
             is_fall = det.get("is_fall", False)
 
+            # OPTIMIZATION: Skip drawing backpack/handbag objects - we only show [BP]/[BAG] labels on people
+            if cls_id == 24 or cls_id == 26:
+                continue  # Skip bag objects, only show person attributes
+
             # Default Colors (BGR)
             color = (0, 255, 0) # Green for Person
             label_prefix = "ID"
@@ -1487,12 +1617,6 @@ class VideoDetector:
             if is_fall:
                 color = (0, 0, 255)
                 label_prefix = "FALL"
-            elif cls_id == 24: # Backpack
-                color = (255, 0, 0)
-                label_prefix = "BP"
-            elif cls_id == 26: # Handbag
-                color = (255, 0, 255)
-                label_prefix = "HB"
 
             if is_loitering:
                 color = (0, 0, 255)
@@ -1510,7 +1634,8 @@ class VideoDetector:
                 cv2.circle(frame, dot_center, 5, color, -1, cv2.LINE_AA)
 
             # Draw Shirt Sampling Box (only during detection, hide after confirmation)
-            if det.get("shirt_box") and track_id is not None:
+            # OPTIMIZATION: Only show debug boxes if enabled
+            if self.show_debug_boxes and det.get("shirt_box") and track_id is not None:
                 # Check if color is confirmed
                 is_confirmed = self.color_confirmed.get(track_id, False)
 
@@ -1562,14 +1687,16 @@ class VideoDetector:
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
             # Draw Pose Skeleton (only if NOT confirmed yet)
-            if track_id is not None and track_id in self.pose_cache:
+            # OPTIMIZATION: Only show debug boxes if enabled
+            if self.show_debug_boxes and track_id is not None and track_id in self.pose_cache:
                 is_confirmed = self.color_confirmed.get(track_id, False)
                 if not is_confirmed:
                     keypoints = self.pose_cache[track_id]
                     self._draw_pose_skeleton(frame, keypoints)
 
             # Draw Mask Bounding Box (only if NOT confirmed - during confirmation phase)
-            if det.get("mask_box") and track_id is not None:
+            # OPTIMIZATION: Only show debug boxes if enabled
+            if self.show_debug_boxes and det.get("mask_box") and track_id is not None:
                 is_mask_confirmed = self.mask_confirmed.get(track_id, False)
 
                 # Only show box if NOT confirmed yet
@@ -1606,16 +1733,8 @@ class VideoDetector:
             # --- Draw Label ---
             label = None
             label_bg_color = (0, 120, 255) # Orange default
-            
-            if cls_id == 24 or cls_id == 26:
-                # Different label bg for bags
-                label_bg_color = (100, 100, 100) # Gray
-                if track_id is not None:
-                     label = f"{label_prefix}:{track_id}"
-                else:
-                     label = f"{'Backpack' if cls_id==24 else 'Handbag'}"
 
-            elif is_fall:
+            if is_fall:
                 label_bg_color = (0, 0, 255)  # Red Label for fall
                 fall_duration = det.get("dwell_time", 0)
                 label = f"FALL DETECTED {fall_duration:.1f}s"
@@ -1668,6 +1787,12 @@ class VideoDetector:
                      if has_handbag == 1:
                          label += " [BAG]"  # Has handbag
 
+                 # Append Backpack Status if available
+                 if track_id is not None and self.backpack_confirmed.get(track_id, False):
+                     has_backpack = self.backpack_cache.get(track_id, 0)
+                     if has_backpack == 1:
+                         label += " [BP]"  # Has backpack
+
             if label:
                 # Draw Label with background
                 label_text_color = (255, 255, 255)
@@ -1680,15 +1805,15 @@ class VideoDetector:
                 # Text
                 cv2.putText(frame, label, (x1, y1 - 2), 0, 0.6, label_text_color, thickness=2, lineType=cv2.LINE_AA)
 
-            # Draw Trajectory Trail
-            if track_id is not None and track_id in self.track_history:
+            # Draw Trajectory Trail (OPTIMIZATION: Only if enabled)
+            if self.trajectory_enabled and track_id is not None and track_id in self.track_history:
                 points = self.track_history[track_id]
                 if len(points) > 1:
                     # Convert to numpy array of points (int)
                     # points is list of (float, float)
                     pts = np.array(points, np.int32)
                     pts = pts.reshape((-1, 1, 2))
-                    
+
                     # Draw polyline
                     # Yellow color for trail, thickness 2
                     cv2.polylines(frame, [pts], False, (0, 255, 255), 2)
@@ -2080,6 +2205,8 @@ class VideoDetector:
         self.mask_confirmed.clear()
         self.handbag_cache.clear()  # Clear handbag detection cache
         self.handbag_confirmed.clear()  # Clear handbag confirmation status
+        self.backpack_cache.clear()  # Clear backpack detection cache
+        self.backpack_confirmed.clear()  # Clear backpack confirmation status
         self.track_history.clear()  # Clear trajectory lines on video loop
         
         # FIX: Clear ReID features to prevent memory leak on loop

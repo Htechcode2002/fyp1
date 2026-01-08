@@ -94,8 +94,8 @@ class DatabaseManager:
             if conn:
                 cursor = conn.cursor()
                 query = """
-                INSERT INTO crossing_events (video_id, location, line_name, count_left, count_right, clothing_color, gender, age, mask_status, handbag, timestamp)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO crossing_events (video_id, location, line_name, count_left, count_right, clothing_color, gender, age, mask_status, handbag, backpack, timestamp)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 cursor.executemany(query, batch)
                 conn.commit()
@@ -156,8 +156,8 @@ class DatabaseManager:
             if conn:
                 cursor = conn.cursor()
                 query = """
-                INSERT INTO crossing_events (video_id, location, line_name, count_left, count_right, clothing_color, gender, age, mask_status, handbag, timestamp)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO crossing_events (video_id, location, line_name, count_left, count_right, clothing_color, gender, age, mask_status, handbag, backpack, timestamp)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """
                 # Process in small chunks to avoid huge transactions
                 for i in range(0, len(offline_data), 50):
@@ -196,6 +196,7 @@ class DatabaseManager:
                 age VARCHAR(50),
                 mask_status VARCHAR(50),
                 handbag TINYINT DEFAULT 0,
+                backpack TINYINT DEFAULT 0,
                 timestamp DATETIME
             )
             """
@@ -234,6 +235,13 @@ class DatabaseManager:
                 cursor.execute("ALTER TABLE crossing_events ADD COLUMN handbag TINYINT DEFAULT 0 AFTER mask_status")
                 conn.commit()
 
+            # Check for backpack column and add if missing
+            cursor.execute("SHOW COLUMNS FROM crossing_events LIKE 'backpack'")
+            if cursor.fetchone() is None:
+                print("Adding missing 'backpack' column...")
+                cursor.execute("ALTER TABLE crossing_events ADD COLUMN backpack TINYINT DEFAULT 0 AFTER handbag")
+                conn.commit()
+
             print("Table 'crossing_events' check/creation successful.")
         except Error as e:
             print(f"Error creating table: {e}")
@@ -241,14 +249,14 @@ class DatabaseManager:
             if conn and conn.is_connected():
                 cursor.close()
 
-    def insert_event(self, video_id, location, line_name, count_left, count_right, clothing_color, gender=None, age=None, mask_status=None, handbag=0):
+    def insert_event(self, video_id, location, line_name, count_left, count_right, clothing_color, gender=None, age=None, mask_status=None, handbag=0, backpack=0):
         """Queue a crossing event for insertion."""
         # Use local PC time instead of database server time
         local_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         # CRITICAL: Use non-blocking put with timeout to prevent crashes
         try:
-            self.queue.put((video_id, location, line_name, count_left, count_right, clothing_color, gender, age, mask_status, handbag, local_timestamp), block=False)
+            self.queue.put((video_id, location, line_name, count_left, count_right, clothing_color, gender, age, mask_status, handbag, backpack, local_timestamp), block=False)
         except queue.Full:
             print(f"⚠️ WARNING: Database queue is full ({self.queue.qsize()} events). Dropping event to prevent memory overflow.")
 
