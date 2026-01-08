@@ -98,10 +98,12 @@ class VideoDetector:
         self.face_cache = {} # track_id -> {gender, age} (final confirmed)
         self.face_confirmed = {} # track_id -> bool (True if confirmed - stop detecting)
         self.face_attempts = {} # track_id -> int (number of failed attempts)
+        self.face_samples = {} # track_id -> list of samples (legacy, used for "Calculating..." display)
 
         # Mask Detection Caching (1-confirmation) - OPTIMIZED
         self.mask_cache = {} # track_id -> mask_status_string (final confirmed)
         self.mask_confirmed = {} # track_id -> bool (True if confirmed - stop detecting)
+        self.mask_samples = {} # track_id -> list of samples (legacy, for cleanup)
 
         # Handbag Detection Tracking (1-confirmation caching)
         self.handbag_cache = {} # track_id -> 1 if has handbag, 0 if no handbag (final confirmed)
@@ -1403,11 +1405,12 @@ class VideoDetector:
                 for det in detections:
                     if det['cls_id'] == 0:
                         tid = det.get('id')
-                        # If confirmed, use cached values
-                        if tid is not None and self.face_confirmed.get(tid, False):
+                        # If confirmed AND cached, use cached values
+                        # FIX: Also check if tid exists in face_cache
+                        if tid is not None and self.face_confirmed.get(tid, False) and tid in self.face_cache:
                             det['gender'] = self.face_cache[tid]['gender']
                             det['age'] = self.face_cache[tid]['age']
-                        else:
+                        elif tid is not None and not self.face_confirmed.get(tid, False):
                             # Need to analyze this person
                             people_to_analyze.append(det)
 
@@ -1464,6 +1467,8 @@ class VideoDetector:
 
                             # After 3 failed attempts, mark as confirmed with "Unknown"
                             if self.face_attempts[tid] >= 3:
+                                # FIX: Also set face_cache to prevent KeyError
+                                self.face_cache[tid] = {'gender': None, 'age': None}
                                 self.face_confirmed[tid] = True  # Stop trying
                                 print(f"[FACE] Track ID {tid}: Failed to detect face after 3 attempts, skipping")
 
@@ -1475,7 +1480,8 @@ class VideoDetector:
                 for det in detections:
                     if det['cls_id'] == 0:
                         tid = det.get('id')
-                        if tid is not None and self.face_confirmed.get(tid, False):
+                        # FIX: Check if tid exists in face_cache before accessing
+                        if tid is not None and self.face_confirmed.get(tid, False) and tid in self.face_cache:
                             det['gender'] = self.face_cache[tid]['gender']
                             det['age'] = self.face_cache[tid]['age']
 
@@ -1754,8 +1760,11 @@ class VideoDetector:
                      is_face_confirmed = self.face_confirmed.get(track_id, False)
                      if is_face_confirmed:
                          # Show gender/age in label only after confirmation
-                         gender_short = "M" if det["gender"] == "Male" else "F"
-                         label += f" {gender_short}/{det['age']}"
+                         # FIX: Check for None values (failed detection after 3 attempts)
+                         if det["gender"] is not None and det["age"] is not None:
+                             gender_short = "M" if det["gender"] == "Male" else "F"
+                             label += f" {gender_short}/{det['age']}"
+                         # If None, don't show anything (failed to detect)
                      else:
                          # Show "Calculating..." while confirming
                          face_sample_count = len(self.face_samples.get(track_id, []))
