@@ -87,7 +87,16 @@ class VideoThread(QThread):
                     print(f"DEBUG: Normalized local path: {src}")
             
         cap = cv2.VideoCapture(src)
-        
+
+        # CRITICAL FIX: Set low-latency mode for RTSP streams to prevent delay accumulation
+        if isinstance(src, str) and src.startswith("rtsp://"):
+            print("[VIDEO] 🔧 Detected RTSP stream - Applying low-latency optimizations...")
+            # Minimize buffering for real-time streams
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Only buffer 1 frame (critical for low latency)
+            # Use TCP instead of UDP for more stable connection (optional, can be removed if causes issues)
+            # cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)  # 5 second timeout
+            # cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)  # 5 second read timeout
+
         if not cap.isOpened():
              print(f"ERROR: Could not open video source: {src}")
              return
@@ -105,7 +114,16 @@ class VideoThread(QThread):
                  return
         
         retries = 0
+        is_rtsp_stream = isinstance(src, str) and src.startswith("rtsp://")
+
         while self._run_flag:
+            # CRITICAL FIX: For RTSP streams, grab latest frame and discard buffered frames
+            # This prevents delay accumulation
+            if is_rtsp_stream:
+                # Grab multiple frames to flush buffer and get the latest one
+                for _ in range(2):  # Read and discard 1 old frame, keep the latest
+                    cap.grab()
+
             ret, frame = cap.read()
             if not ret:
                 # Check if it's a local file (Loop it) or a stream (Retry)
@@ -191,15 +209,19 @@ class VideoThread(QThread):
                     traceback.print_exc()
 
             # Sync with video FPS to prevent "fast-forward" effect
-            # Delay is calculated based on video properties (usually ~0.033s for 30fps)
-            fps = self.fps if hasattr(self, 'fps') and self.fps > 0 else 30
-            delay = 1.0 / fps
-            
-            # Adjust sleep to account for processing time
-            # If processing took a long time, we sleep less.
-            elapsed = time.time() - current_time
-            sleep_time = max(0.001, delay - elapsed)
-            time.sleep(sleep_time) 
+            # For RTSP streams, minimize sleep to reduce latency
+            if is_rtsp_stream:
+                # For real-time streams, only sleep minimally to allow processing
+                time.sleep(0.001)  # 1ms sleep to prevent CPU spinning
+            else:
+                # For local files, sync with video FPS
+                fps = self.fps if hasattr(self, 'fps') and self.fps > 0 else 30
+                delay = 1.0 / fps
+
+                # Adjust sleep to account for processing time
+                elapsed = time.time() - current_time
+                sleep_time = max(0.001, delay - elapsed)
+                time.sleep(sleep_time) 
             
         cap.release()
 

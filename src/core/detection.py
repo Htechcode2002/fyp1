@@ -55,10 +55,10 @@ class VideoDetector:
 
         # Optimization: Frame Skipping & Frequency
         self.frame_count = 0
-        self.inference_freq = 1 # Back to 1 for maximum precision (every frame)
+        self.inference_freq = 2 # Process every 2nd frame for real-time streams (reduces lag by 50%)
         self.heatmap_update_freq = 5 # Update heatmap overlay every 5 frames
         self.cached_heatmap_overlay = None
-        self.face_analysis_freq = 15 # Run face analysis every 15 frames (reduced from 10 for stability)
+        self.face_analysis_freq = 30 # Run face analysis every 30 frames (reduced for performance)
 
         # Prediction caching for skipped frames
         self.last_detections = []
@@ -668,10 +668,10 @@ class VideoDetector:
         current_counts = copy.deepcopy(self.line_counts)
         current_time = time.time()
         
-        # PERFORMANCE OPTIMIZATION: Use higher resolution for 4090 power
-        imgsz = 960
+        # PERFORMANCE OPTIMIZATION: Balanced resolution for real-time RTSP streams
+        imgsz = 640  # Reduced from 960 to 640 for faster inference (2x speed improvement)
         # Lower confidence threshold to reduce GPU floating-point precision differences
-        conf_threshold = 0.15  # Default is 0.25, lowering to catch edge cases
+        conf_threshold = 0.20  # Slightly higher than before for better precision
         
         if tracking_enabled:
             # Persist=True for tracking

@@ -186,21 +186,26 @@ class VideoSourceCard(QFrame):
         self.rb_url = QRadioButton("Stream URL")
         self.rb_file = QRadioButton("Video File")
         self.rb_camera = QRadioButton("Webcam")
+        self.rb_cctv = QRadioButton("CCTV/RTSP")
         self.rb_url.setCursor(Qt.PointingHandCursor)
         self.rb_file.setCursor(Qt.PointingHandCursor)
         self.rb_camera.setCursor(Qt.PointingHandCursor)
+        self.rb_cctv.setCursor(Qt.PointingHandCursor)
         self.type_group.addButton(self.rb_url)
         self.type_group.addButton(self.rb_file)
         self.type_group.addButton(self.rb_camera)
+        self.type_group.addButton(self.rb_cctv)
 
         self.rb_url.toggled.connect(self.update_input_mode)
         self.rb_file.toggled.connect(self.update_input_mode)
         self.rb_camera.toggled.connect(self.update_input_mode)
+        self.rb_cctv.toggled.connect(self.update_input_mode)
 
         type_layout = QHBoxLayout()
         type_layout.addWidget(self.rb_url)
         type_layout.addWidget(self.rb_file)
         type_layout.addWidget(self.rb_camera)
+        type_layout.addWidget(self.rb_cctv)
         type_layout.addStretch()
         layout.addLayout(type_layout)
         
@@ -247,12 +252,124 @@ class VideoSourceCard(QFrame):
             except:
                 pass
 
+        # RTSP/CCTV Configuration Form
+        self.rtsp_form = QFrame()
+        self.rtsp_form.setStyleSheet("""
+            QFrame {
+                background-color: #eff6ff;
+                border: 1px solid #bfdbfe;
+                border-radius: 6px;
+            }
+        """)
+        self.rtsp_form.setVisible(False)
+
+        rtsp_layout = QVBoxLayout(self.rtsp_form)
+        rtsp_layout.setContentsMargins(15, 15, 15, 15)
+        rtsp_layout.setSpacing(10)
+
+        # RTSP Form Title
+        rtsp_title = QLabel("📹 CCTV Configuration")
+        rtsp_title.setStyleSheet("color: #1e40af; font-weight: bold; font-size: 13px; background: transparent; border: none;")
+        rtsp_layout.addWidget(rtsp_title)
+
+        # Get saved RTSP config if available
+        rtsp_config = self.source_data.get("rtsp_config", {})
+
+        # IP Address
+        ip_layout = QHBoxLayout()
+        lbl_ip = QLabel("IP Address:")
+        lbl_ip.setStyleSheet("color: #1e293b; font-weight: 600; min-width: 100px; background: transparent; border: none;")
+        self.inp_rtsp_ip = QLineEdit(rtsp_config.get("ip", "192.168.0.79"))
+        self.inp_rtsp_ip.setPlaceholderText("e.g. 192.168.0.79")
+        self.inp_rtsp_ip.setStyleSheet(input_style)
+        ip_layout.addWidget(lbl_ip)
+        ip_layout.addWidget(self.inp_rtsp_ip)
+        rtsp_layout.addLayout(ip_layout)
+
+        # Username
+        user_layout = QHBoxLayout()
+        lbl_user = QLabel("Username:")
+        lbl_user.setStyleSheet("color: #1e293b; font-weight: 600; min-width: 100px; background: transparent; border: none;")
+        self.inp_rtsp_user = QLineEdit(rtsp_config.get("username", "admin"))
+        self.inp_rtsp_user.setPlaceholderText("Username")
+        self.inp_rtsp_user.setStyleSheet(input_style)
+        user_layout.addWidget(lbl_user)
+        user_layout.addWidget(self.inp_rtsp_user)
+        rtsp_layout.addLayout(user_layout)
+
+        # Password
+        pass_layout = QHBoxLayout()
+        lbl_pass = QLabel("Password:")
+        lbl_pass.setStyleSheet("color: #1e293b; font-weight: 600; min-width: 100px; background: transparent; border: none;")
+        self.inp_rtsp_pass = QLineEdit(rtsp_config.get("password", ""))
+        self.inp_rtsp_pass.setPlaceholderText("Password")
+        self.inp_rtsp_pass.setEchoMode(QLineEdit.Password)
+        self.inp_rtsp_pass.setStyleSheet(input_style)
+        pass_layout.addWidget(lbl_pass)
+        pass_layout.addWidget(self.inp_rtsp_pass)
+        rtsp_layout.addLayout(pass_layout)
+
+        # Channel and Subtype (in one row)
+        channel_layout = QHBoxLayout()
+
+        lbl_channel = QLabel("Channel:")
+        lbl_channel.setStyleSheet("color: #1e293b; font-weight: 600; background: transparent; border: none;")
+        self.inp_rtsp_channel = QLineEdit(str(rtsp_config.get("channel", 1)))
+        self.inp_rtsp_channel.setPlaceholderText("1")
+        self.inp_rtsp_channel.setValidator(QIntValidator(1, 32))
+        self.inp_rtsp_channel.setFixedWidth(60)
+        self.inp_rtsp_channel.setStyleSheet(input_style)
+
+        lbl_subtype = QLabel("Subtype:")
+        lbl_subtype.setStyleSheet("color: #1e293b; font-weight: 600; margin-left: 15px; background: transparent; border: none;")
+        self.combo_rtsp_subtype = QComboBox()
+        self.combo_rtsp_subtype.addItem("Main Stream (High Quality)", 0)
+        self.combo_rtsp_subtype.addItem("Sub Stream (Recommended)", 1)
+        self.combo_rtsp_subtype.setCurrentIndex(rtsp_config.get("subtype", 1))
+        self.combo_rtsp_subtype.setStyleSheet("""
+            QComboBox {
+                padding: 8px 12px;
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                background-color: white;
+                color: #1e293b;
+            }
+            QComboBox:focus { border: 1px solid #3b82f6; }
+        """)
+
+        channel_layout.addWidget(lbl_channel)
+        channel_layout.addWidget(self.inp_rtsp_channel)
+        channel_layout.addWidget(lbl_subtype)
+        channel_layout.addWidget(self.combo_rtsp_subtype, 1)
+        rtsp_layout.addLayout(channel_layout)
+
+        # Generated RTSP URL Display (Read-only)
+        self.lbl_rtsp_url = QLabel("RTSP URL: <i>Will be generated automatically</i>")
+        self.lbl_rtsp_url.setStyleSheet("""
+            color: #64748b;
+            font-size: 11px;
+            padding: 8px;
+            background-color: #f1f5f9;
+            border-radius: 4px;
+            border: 1px dashed #cbd5e1;
+        """)
+        self.lbl_rtsp_url.setWordWrap(True)
+        rtsp_layout.addWidget(self.lbl_rtsp_url)
+
+        # Connect inputs to update URL preview
+        self.inp_rtsp_ip.textChanged.connect(self.update_rtsp_url_preview)
+        self.inp_rtsp_user.textChanged.connect(self.update_rtsp_url_preview)
+        self.inp_rtsp_pass.textChanged.connect(self.update_rtsp_url_preview)
+        self.inp_rtsp_channel.textChanged.connect(self.update_rtsp_url_preview)
+        self.combo_rtsp_subtype.currentIndexChanged.connect(self.update_rtsp_url_preview)
+
         path_layout = QHBoxLayout()
         path_layout.addWidget(self.inp_path)
         path_layout.addWidget(self.btn_browse)
         path_layout.addWidget(self.camera_selector)
 
         layout.addLayout(path_layout)
+        layout.addWidget(self.rtsp_form)  # Add RTSP form below path layout
 
         # Danger Threshold Input (Using LineEdit instead of SpinBox)
         danger_layout = QHBoxLayout()
@@ -376,6 +493,8 @@ class VideoSourceCard(QFrame):
             self.rb_file.setChecked(True)
         elif source_type == "camera":
             self.rb_camera.setChecked(True)
+        elif source_type == "cctv":
+            self.rb_cctv.setChecked(True)
         else:
             self.rb_url.setChecked(True)
         self.update_input_mode()
@@ -383,12 +502,17 @@ class VideoSourceCard(QFrame):
     def update_input_mode(self):
         is_file = self.rb_file.isChecked()
         is_camera = self.rb_camera.isChecked()
+        is_cctv = self.rb_cctv.isChecked()
 
         self.btn_browse.setVisible(is_file)
-        self.inp_path.setVisible(not is_camera)
+        self.inp_path.setVisible(not is_camera and not is_cctv)
         self.camera_selector.setVisible(is_camera)
+        self.rtsp_form.setVisible(is_cctv)
 
-        if is_camera:
+        if is_cctv:
+            # Update RTSP URL preview when switching to CCTV mode
+            self.update_rtsp_url_preview()
+        elif is_camera:
             # For camera, show dropdown selector
             pass
         elif is_file:
@@ -400,6 +524,43 @@ class VideoSourceCard(QFrame):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select Video", "", "Video Files (*.mp4 *.avi *.mkv *.mov)")
         if file_path:
             self.inp_path.setText(file_path)
+
+    def update_rtsp_url_preview(self):
+        """Generate and display RTSP URL based on current form inputs"""
+        ip = self.inp_rtsp_ip.text().strip()
+        username = self.inp_rtsp_user.text().strip()
+        password = self.inp_rtsp_pass.text().strip()
+        channel = self.inp_rtsp_channel.text().strip() or "1"
+        subtype = self.combo_rtsp_subtype.currentData()
+
+        if not ip:
+            self.lbl_rtsp_url.setText("RTSP URL: <i>Please enter IP address</i>")
+            return
+
+        if not username or not password:
+            self.lbl_rtsp_url.setText("RTSP URL: <i>Please enter username and password</i>")
+            return
+
+        # Construct RTSP URL
+        rtsp_url = f"rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype={subtype}"
+
+        # Display with password masked for security
+        display_url = f"rtsp://{username}:****@{ip}:554/cam/realmonitor?channel={channel}&subtype={subtype}"
+        self.lbl_rtsp_url.setText(f"<b>RTSP URL:</b> <code>{display_url}</code>")
+        self.lbl_rtsp_url.setToolTip(f"Full URL (hover to see): {rtsp_url}")
+
+    def get_rtsp_url(self):
+        """Generate the actual RTSP URL with real password"""
+        ip = self.inp_rtsp_ip.text().strip()
+        username = self.inp_rtsp_user.text().strip()
+        password = self.inp_rtsp_pass.text().strip()
+        channel = self.inp_rtsp_channel.text().strip() or "1"
+        subtype = self.combo_rtsp_subtype.currentData()
+
+        if not ip or not username or not password:
+            return ""
+
+        return f"rtsp://{username}:{password}@{ip}:554/cam/realmonitor?channel={channel}&subtype={subtype}"
 
     def save(self):
         try:
@@ -449,6 +610,21 @@ class VideoSourceCard(QFrame):
                 path_val = str(self.camera_selector.currentData())
             elif self.rb_file.isChecked():
                 type_str = "file"
+            elif self.rb_cctv.isChecked():
+                type_str = "cctv"
+                # Generate and save RTSP URL
+                path_val = self.get_rtsp_url()
+                if not path_val:
+                    self.show_status_message("❌ Error: Please fill in all RTSP fields", success=False)
+                    return
+                # Save RTSP config
+                self.source_data["rtsp_config"] = {
+                    "ip": self.inp_rtsp_ip.text().strip(),
+                    "username": self.inp_rtsp_user.text().strip(),
+                    "password": self.inp_rtsp_pass.text().strip(),
+                    "channel": self.inp_rtsp_channel.text().strip() or "1",
+                    "subtype": self.combo_rtsp_subtype.currentData()
+                }
 
             self.source_data["type"] = type_str
             self.source_data["path"] = path_val
@@ -516,24 +692,54 @@ class VideoSourceCard(QFrame):
             val = int(self.inp_danger.text())
         except ValueError:
             val = 100
-            
+
+        try:
+            loitering_val = int(self.inp_loitering.text())
+        except ValueError:
+            loitering_val = 5
+
+        try:
+            fall_val = int(self.inp_fall.text())
+        except ValueError:
+            fall_val = 2
+
         type_str = "url"
         path_val = self.inp_path.text()
-        
+        rtsp_config = None
+
         if self.rb_camera.isChecked():
             type_str = "camera"
             path_val = str(self.camera_selector.currentData())
         elif self.rb_file.isChecked():
             type_str = "file"
+        elif self.rb_cctv.isChecked():
+            type_str = "cctv"
+            # Generate RTSP URL and save config
+            path_val = self.get_rtsp_url()
+            rtsp_config = {
+                "ip": self.inp_rtsp_ip.text().strip(),
+                "username": self.inp_rtsp_user.text().strip(),
+                "password": self.inp_rtsp_pass.text().strip(),
+                "channel": self.inp_rtsp_channel.text().strip() or "1",
+                "subtype": self.combo_rtsp_subtype.currentData()
+            }
 
-        return {
+        data = {
             "id": self.source_id,
             "name": self.inp_location.text() or f"Source {self.source_id}",
             "type": type_str,
             "path": path_val,
             "location": self.inp_location.text(),
-            "danger_threshold": val
+            "danger_threshold": val,
+            "loitering_threshold": loitering_val,
+            "fall_threshold": fall_val
         }
+
+        # Add RTSP config if CCTV type
+        if rtsp_config:
+            data["rtsp_config"] = rtsp_config
+
+        return data
 
 
 class ColorRangeVisualizer(QWidget):

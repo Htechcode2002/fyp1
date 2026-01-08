@@ -15,14 +15,21 @@
     },
     "video_sources": [
         {
-            "id": "9a069e77",
-            "name": "Source 9a069e77",
+            "id": "47abe01b",
+            "name": "Source 47abe01b",
             "location": "",
-            "type": "file",
-            "path": "C:/Users/MMU/Downloads/mask (2).mp4",
+            "type": "cctv",
+            "path": "rtsp://admin:Charles_20022002@192.168.0.79:554/cam/realmonitor?channel=1&subtype=1",
             "danger_threshold": 100,
             "loitering_threshold": 5,
-            "fall_threshold": 2
+            "fall_threshold": 2,
+            "rtsp_config": {
+                "ip": "192.168.0.79",
+                "username": "admin",
+                "password": "Charles_20022002",
+                "channel": "1",
+                "subtype": 1
+            }
         }
     ]
 }
