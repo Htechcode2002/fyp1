@@ -39,3 +39,14 @@ Thumbs.db
 
 # InsightFace model cache
 ~/.insightface/
+
+# ML Models
+# models/*.pt
+models/**/*.onnx
+models/**/*.engine
+
+# Video Recordings
+recordings/
+*.mp4
+*.avi
+*.mkv
