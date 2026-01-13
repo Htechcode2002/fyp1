@@ -296,6 +296,21 @@ class DatabaseManager:
             print(f"Analytics Query Error: {e}")
             return []
 
+    def get_unique_video_ids(self):
+        """Fetch all unique video IDs that have data in the database."""
+        conn = self.connect()
+        if not conn:
+            return []
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT video_id FROM crossing_events")
+            results = [row[0] for row in cursor.fetchall() if row[0]]
+            cursor.close()
+            return results
+        except Error as e:
+            print(f"Fetch Unique IDs Error: {e}")
+            return []
+
     def delete_event(self, event_id):
         """Delete a single event by ID"""
         conn = self.connect()

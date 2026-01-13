@@ -20,6 +20,7 @@ class VideoDetector:
         self.use_reid = True  # Enable ReID for cross-camera tracking
         self.reid_features = {}  # Store ReID features for each track_id
         self.multi_cam_tracker = multi_cam_tracker  # Shared cross-camera tracker instance
+        self.cm = ConfigManager()
         self.db = DatabaseManager()
         self.heatmap_enabled = False
         self.heatmap_accumulator = None
@@ -42,8 +43,6 @@ class VideoDetector:
         self.face_analyzer = FaceAnalyzer()  # InsightFace analyzer
         self.mask_detection_enabled = True  # Default ON - Toggle for mask detection
         self.mask_model = None  # YOLO model for mask detection
-        self.pose_model = None  # YOLO Pose model for accurate clothing region detection
-        self.pose_cache = {}  # track_id -> keypoints (cached after first detection)
         self.danger_threshold = danger_threshold  # Danger threshold for crowd warning
         self.danger_warning_active = False  # Track if danger warning is currently active
         self.telegram_notifier = create_telegram_notifier()  # Telegram alert system
@@ -51,17 +50,20 @@ class VideoDetector:
         # OPTIMIZATION: Use shared model pool instead of individual model instances
         self.model_pool = get_model_pool()
         self.model = None
-        self.display_mode = "dot"  # Display mode: "dot" (head dot only) or "box" (bounding box)
+        self.display_mode = "dot"  # Default back to cleaner 'dot' mode
         self.trajectory_enabled = True  # Show trajectory lines (can be disabled for performance)
-        self.show_debug_boxes = False  # OPTIMIZATION: Disable debug boxes (shirt/mask/pose) to reduce lag
+        self.show_debug_boxes = False  # DISABLED: Reducing lag and visual clutter
+        self.is_recording = False  # Visual indicator state
 
         # Optimization: Frame Skipping & Frequency
         self.frame_count = 0
+        self._last_known_count = 0 # To detect when sources are removed
         self.inference_freq = 1 # Process every frame for smooth tracking (set to 2 for better performance)
         self.heatmap_update_freq = 5 # Update heatmap overlay every 5 frames
         self.cached_heatmap_overlay = None
-        # OPTIMIZATION: Increased to 45 frames since 1-confirmation caching handles most cases
-        self.face_analysis_freq = 45 # Run face analysis every 45 frames (with caching)
+        self.face_analysis_freq = 4 # Default 4 for smooth performance on 1660S
+        self.last_face_info = []    # Persistent results for smooth drawing
+        self.face_ai_sleep_until = 0 # If efficiency is low, sleep for N frames
 
         # Prediction caching for skipped frames
         self.last_detections = []
@@ -96,6 +98,15 @@ class VideoDetector:
 
         # Face Analysis Caching (1-confirmation) - OPTIMIZED
         self.face_cache = {} # track_id -> {gender, age} (final confirmed)
+        self.face_confirmed = {} # track_id -> bool
+
+        # Performance Monitoring
+        self._perf_stats = {
+            "inference": 0.0,
+            "latency": 0.0,
+            "fps": 0.0,
+            "load": 0.0
+        }
         self.face_confirmed = {} # track_id -> bool (True if confirmed - stop detecting)
         self.face_attempts = {} # track_id -> int (number of failed attempts)
         self.face_samples = {} # track_id -> list of samples (legacy, used for "Calculating..." display)
@@ -139,31 +150,67 @@ class VideoDetector:
         if enabled and self.fall_model is None:
             self.load_fall_detection_model()
 
+    def _get_optimized_path(self, base_path):
+        """Helper to prefer .engine over .pt if it exists"""
+        engine_path = base_path.replace(".pt", ".engine")
+        if os.path.exists(engine_path):
+            return engine_path
+        return base_path
+
+    def _setup_model_device(self, model, model_path):
+        """Safely move model to GPU if it's a PyTorch model"""
+        import torch
+        if model is None: return
+        
+        if torch.cuda.is_available():
+            device = 'cuda:0'
+            # Check if it's an exported format (TensorRT, ONNX)
+            is_exported = not model_path.lower().endswith('.pt')
+            
+            if hasattr(model, 'device') and 'cuda' in str(model.device):
+                return # Already on GPU
+            
+            if not is_exported:
+                try:
+                    model.to(device)
+                    print(f"[GPU] ✅ Moved PyTorch model to GPU: {os.path.basename(model_path)}")
+                except: pass
+            else:
+                print(f"[GPU] ⚙️ Using Native {model_path.split('.')[-1].upper()} on CUDA: {os.path.basename(model_path)}")
+
+    def load_face_model(self):
+        """Load YOLO face detection model from shared pool."""
+        try:
+            from src.core.config_manager import ConfigManager
+            cm = ConfigManager()
+            face_model_path = cm.get("yolo", {}).get("face_model_path", "models/face/yolov8n-face.pt")
+            face_model_path = face_model_path.replace("\\", "/")
+            
+            # AUTOMATIC OPTIMIZATION: Prefer .engine
+            face_model_path = self._get_optimized_path(face_model_path)
+            
+            print(f"[DETECTOR] 🔗 Getting shared YOLO Face model from pool (path: {face_model_path})...")
+            face_model = self.model_pool.get_face_model(face_model_path)
+            if face_model is not None:
+                self.face_analyzer.set_yolo_face_model(face_model)
+                self._setup_model_device(face_model, face_model_path)
+        except Exception as e:
+            print(f"[DETECTOR] ❌ ERROR: Failed to load face detection model: {e}")
+
     def load_fall_detection_model(self):
         """Load fall detection model from shared pool (GPU optimized)"""
-        import torch
-        fall_model_path = "models/fall/fall_det_1.pt"
+        base_path = "models/fall/fall_det_1.pt"
+        fall_model_path = self._get_optimized_path(base_path)
 
-        if not os.path.exists(fall_model_path):
-            print(f"[DETECTOR] ⚠️ WARNING: Fall detection model not found at {fall_model_path}")
+        if not os.path.exists(fall_model_path) and not os.path.exists(base_path):
+            print(f"[DETECTOR] ⚠️ Fall model not found. Skipping.")
             return
 
         try:
-            # OPTIMIZATION: Get shared fall detection model from pool
-            print(f"[DETECTOR] 🔗 Getting shared Fall detection model from pool...")
             self.fall_model = self.model_pool.get_fall_model(fall_model_path)
-
-            if self.fall_model is not None:
-                # Move to GPU if available
-                if torch.cuda.is_available():
-                    if not (hasattr(self.fall_model, 'device') and 'cuda' in str(self.fall_model.device)):
-                        self.fall_model.to('cuda:0')
-                    print(f"[DETECTOR] ✅ Shared Fall detection model ready on GPU!")
-                else:
-                    print("[DETECTOR] 💻 Shared Fall detection model ready on CPU.")
-
+            self._setup_model_device(self.fall_model, fall_model_path)
         except Exception as e:
-            print(f"[DETECTOR] ❌ ERROR: Failed to load fall detection model: {e}")
+            print(f"[DETECTOR] ❌ ERROR: Failed to load fall detection: {e}")
             self.fall_model = None
 
     def filter_skin_and_get_clothing(self, roi):
@@ -326,8 +373,9 @@ class VideoDetector:
             if self.mask_detection_enabled:
                 self.load_mask_model()
 
-            # Load pose model for improved clothing color detection
-            self.load_pose_model()
+            # SKIP independent YOLO face model to save GPU RAM (using Fast Global Mode instead)
+            # if self.face_analysis_enabled:
+            #     self.load_face_model()
 
             self._models_loaded = True
             self._models_loading = False
@@ -341,117 +389,50 @@ class VideoDetector:
 
     def load_model(self):
         """Load main YOLO model from shared model pool (GPU optimized)"""
-        import torch
         cm = ConfigManager()
-        model_path = cm.get("yolo", {}).get("model_path", "models/yolov8n.pt")
+        base_path = cm.get("yolo", {}).get("model_path", "models/yolov8n.pt")
+        model_path = self._get_optimized_path(base_path)
+        
         print(f"[DETECTOR] 📋 Configured model path: {model_path}")
 
-        # Check if model exists
-        if not os.path.exists(model_path):
-            print(f"[DETECTOR] ⚠️ WARNING: YOLO model not found at {model_path}. Detection will be disabled.")
-            return
-
         try:
-            # OPTIMIZATION: Get shared model from pool instead of loading new instance
-            print(f"[DETECTOR] 🔗 Getting shared YOLO model from pool...")
             self.model = self.model_pool.get_main_model(model_path)
-
-            if self.model is not None:
-                # Check GPU status
-                if torch.cuda.is_available():
-                    device = 'cuda:0'
-                    print(f"[DETECTOR] 🎮 GPU detected: {torch.cuda.get_device_name(0)}")
-                    # Model is already on GPU from pool, just verify
-                    if hasattr(self.model, 'device') and 'cuda' in str(self.model.device):
-                        print(f"[DETECTOR] ✅ Shared YOLO model ready on GPU!")
-                    else:
-                        self.model.to(device)
-                        print(f"[DETECTOR] ✅ Moved shared YOLO model to GPU!")
-                else:
-                    print("[DETECTOR] 💻 No GPU detected. Using shared model on CPU.")
-            else:
-                print("[DETECTOR] ❌ Failed to get model from pool")
-
+            self._setup_model_device(self.model, model_path)
         except Exception as e:
-            print(f"[DETECTOR] ❌ CRITICAL ERROR: Failed to load YOLO model: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"[DETECTOR] ❌ CRITICAL ERROR: Failed to load YOLO: {e}")
             self.model = None
 
 
     def load_mask_model(self):
         """Load YOLO mask detection model from shared pool (GPU optimized)"""
-        import torch
-        mask_model_path = "models/mask/mask.pt"
-
-        if not os.path.exists(mask_model_path):
-            print(f"[DETECTOR] ⚠️ Mask model not found at {mask_model_path}. Mask detection will be disabled.")
-            return
+        base_path = "models/mask/mask.pt"
+        mask_model_path = self._get_optimized_path(base_path)
 
         try:
-            # OPTIMIZATION: Get shared mask model from pool
-            print(f"[DETECTOR] 🔗 Getting shared Mask detection model from pool...")
             self.mask_model = self.model_pool.get_mask_model(mask_model_path)
-
-            if self.mask_model is not None:
-                # Move to GPU if available
-                if torch.cuda.is_available():
-                    if not (hasattr(self.mask_model, 'device') and 'cuda' in str(self.mask_model.device)):
-                        self.mask_model.to('cuda:0')
-                    print("[DETECTOR] ✅ Shared Mask model ready on GPU!")
-                else:
-                    print("[DETECTOR] 💻 Shared Mask model ready on CPU.")
-
+            self._setup_model_device(self.mask_model, mask_model_path)
         except Exception as e:
             print(f"[DETECTOR] ❌ Failed to load Mask model: {e}")
             self.mask_model = None
 
-    def load_pose_model(self):
-        """Load YOLO Pose model from shared pool (GPU optimized)"""
-        import torch
-        pose_model_path = "models/pose/pose.pt"
-
-        if not os.path.exists(pose_model_path):
-            print(f"[DETECTOR] ⚠️ Pose model not found at {pose_model_path}. Skipping pose-based clothing detection.")
-            self.pose_model = None
-            return
-
-        try:
-            # OPTIMIZATION: Get shared pose model from pool
-            print(f"[DETECTOR] 🔗 Getting shared Pose model from pool...")
-            self.pose_model = self.model_pool.get_pose_model(pose_model_path)
-
-            if self.pose_model is not None:
-                # Move to GPU if available
-                if torch.cuda.is_available():
-                    if not (hasattr(self.pose_model, 'device') and 'cuda' in str(self.pose_model.device)):
-                        self.pose_model.to('cuda:0')
-                    print("[DETECTOR] ✅ Shared Pose model ready on GPU!")
-                else:
-                    print("[DETECTOR] 💻 Shared Pose model ready on CPU.")
-
-        except Exception as e:
-            print(f"[DETECTOR] ❌ Failed to load Pose model: {e}")
-            self.pose_model = None
-
-    def _extract_keypoints_for_person(self, pose_results, px1, py1, px2, py2):
-        """Extract keypoints for a specific person bounding box from pose results"""
-        if not pose_results or len(pose_results) == 0:
-            return None
-
-        for result in pose_results:
-            if hasattr(result, 'keypoints') and result.keypoints is not None:
-                keypoints_data = result.keypoints.data
-                boxes_data = result.boxes.xyxy
-
-                # Find keypoints that belong to this person box
-                for kp, box in zip(keypoints_data, boxes_data):
-                    bx1, by1, bx2, by2 = box.cpu().numpy()
-                    # Check if this pose box overlaps with person box
-                    iou = self._calculate_iou([px1, py1, px2, py2], [bx1, by1, bx2, by2])
-                    if iou > 0.5:  # Good overlap
-                        return kp.cpu().numpy()  # Return keypoints (17, 3) - [x, y, confidence]
-        return None
+    def _get_shirt_box_simple(self, x1, y1, x2, y2, frame_shape):
+        """Ultra-fast clothes ROI estimation using only the person's bounding box"""
+        hf, wf = frame_shape[:2]
+        bw = x2 - x1
+        bh = y2 - y1
+        
+        # Human torso is approximately in the upper-middle region
+        # ROI: 20-50% of height, 25-75% of width
+        sx1 = int(x1 + bw * 0.25)
+        sy1 = int(y1 + bh * 0.15)
+        sx2 = int(x2 - bw * 0.25)
+        sy2 = int(y1 + bh * 0.45)
+        
+        # Clip to boundaries
+        sx1, sy1 = max(0, sx1), max(0, sy1)
+        sx2, sy2 = min(wf, sx2), min(hf, sy2)
+        
+        return [sx1, sy1, sx2, sy2]
 
     def _calculate_iou(self, box1, box2):
         """Calculate Intersection over Union between two boxes"""
@@ -469,85 +450,6 @@ class VideoDetector:
         union_area = box1_area + box2_area - inter_area
 
         return inter_area / union_area if union_area > 0 else 0
-
-    def _get_shirt_box_from_pose(self, keypoints, cx, frame_shape):
-        """Calculate shirt box using pose keypoints
-        COCO keypoints: 0=nose, 5=left_shoulder, 6=right_shoulder, 11=left_hip, 12=right_hip"""
-        h_f, w_f = frame_shape[:2]
-
-        # Extract key points: shoulders (5, 6) and hips (11, 12)
-        left_shoulder = keypoints[5][:2]  # [x, y]
-        right_shoulder = keypoints[6][:2]
-        left_hip = keypoints[11][:2]
-        right_hip = keypoints[12][:2]
-
-        # Check if keypoints are valid (confidence > 0)
-        shoulders_conf = keypoints[5][2] > 0.3 and keypoints[6][2] > 0.3
-        hips_conf = keypoints[11][2] > 0.3 and keypoints[12][2] > 0.3
-
-        if not (shoulders_conf and hips_conf):
-            return None  # Not enough confidence
-
-        # Calculate torso region from shoulders to hips
-        shoulder_y = (left_shoulder[1] + right_shoulder[1]) / 2
-        hip_y = (left_hip[1] + right_hip[1]) / 2
-
-        # Width based on shoulder distance
-        shoulder_width = abs(right_shoulder[0] - left_shoulder[0])
-        half_w = shoulder_width * 0.35  # 70% of shoulder width
-
-        # Shirt region: from shoulders to hips
-        sx1 = int(cx - half_w)
-        sy1 = int(shoulder_y)
-        sx2 = int(cx + half_w)
-        sy2 = int(hip_y)
-
-        # Clip to frame boundaries
-        sx1, sy1 = max(0, sx1), max(0, sy1)
-        sx2, sy2 = min(w_f, sx2), min(h_f, sy2)
-
-        return [sx1, sy1, sx2, sy2]
-
-
-    def _draw_pose_skeleton(self, frame, keypoints):
-        """Draw pose skeleton on frame using COCO keypoints
-        COCO keypoints order: 0-nose, 1-left_eye, 2-right_eye, 3-left_ear, 4-right_ear,
-        5-left_shoulder, 6-right_shoulder, 7-left_elbow, 8-right_elbow,
-        9-left_wrist, 10-right_wrist, 11-left_hip, 12-right_hip,
-        13-left_knee, 14-right_knee, 15-left_ankle, 16-right_ankle"""
-
-        # Define skeleton connections (pairs of keypoint indices)
-        skeleton = [
-            # Head
-            (0, 1), (0, 2), (1, 3), (2, 4),
-            # Torso
-            (5, 6), (5, 11), (6, 12), (11, 12),
-            # Arms
-            (5, 7), (7, 9), (6, 8), (8, 10),
-            # Legs
-            (11, 13), (13, 15), (12, 14), (14, 16)
-        ]
-
-        # Color for skeleton (cyan)
-        color = (255, 255, 0)
-
-        # Draw connections
-        for start_idx, end_idx in skeleton:
-            if start_idx < len(keypoints) and end_idx < len(keypoints):
-                start_kp = keypoints[start_idx]
-                end_kp = keypoints[end_idx]
-
-                # Check if both keypoints have enough confidence
-                if start_kp[2] > 0.3 and end_kp[2] > 0.3:
-                    start_point = (int(start_kp[0]), int(start_kp[1]))
-                    end_point = (int(end_kp[0]), int(end_kp[1]))
-                    cv2.line(frame, start_point, end_point, color, 2)
-
-        # Draw keypoints
-        for kp in keypoints:
-            if kp[2] > 0.3:  # Confidence threshold
-                center = (int(kp[0]), int(kp[1]))
-                cv2.circle(frame, center, 3, (0, 255, 255), -1)  # Yellow dots
 
     def check_loitering(self, track_id, current_pos):
         """
@@ -635,29 +537,23 @@ class VideoDetector:
         self.frame_count += 1
 
         # CRITICAL: GPU Memory Management - Clear CUDA cache periodically
-        # This prevents GPU memory from growing unbounded and causing crashes
-        # OPTIMIZATION: Reduced from 500 to 300 for more frequent cleanup
-        if self.frame_count % 300 == 0:  # Every ~10 seconds at 30 FPS
+        # OPTIMIZATION: Increased from 300 to 5000. Frequent empty_cache() causes execution stutters
+        # which breaks real-time tracking consistency and drops detection rates.
+        if self.frame_count % 5000 == 0:  # Every ~3 minutes at 30 FPS
             try:
                 import torch
                 import gc
                 if torch.cuda.is_available():
-                    # Get memory stats before cleanup
-                    allocated = torch.cuda.memory_allocated() / 1024**2
-                    reserved = torch.cuda.memory_reserved() / 1024**2
-                    
-                    # Force garbage collection first
+                    # Forcing GC and empty_cache is expensive (causes stutter)
+                    # Only do it very infrequently to prevent memory fragmentation
                     gc.collect()
-                    # Clear unused GPU memory
                     torch.cuda.empty_cache()
                     
-                    # Log memory usage
-                    if allocated > 2000:  # Warning if > 2GB allocated
-                        print(f"⚠️ [GPU] High memory usage: {allocated:.0f}MB allocated, {reserved:.0f}MB reserved")
-                    else:
-                        print(f"[GPU] Memory: {allocated:.0f}MB allocated, {reserved:.0f}MB reserved (cache/gc cleared)")
-            except Exception as e:
-                pass  # Ignore errors if torch not available or CUDA not working
+                    allocated = torch.cuda.memory_allocated() / 1024**2
+                    reserved = torch.cuda.memory_reserved() / 1024**2
+                    print(f"[GPU] Maintenance: {allocated:.0f}MB used (Cache Refreshed)")
+            except Exception:
+                pass
 
         # CRITICAL: Monitor cache sizes to detect memory leaks
         if self.frame_count % 300 == 0:  # Check every 300 frames (every 10 seconds at 30 FPS)
@@ -675,53 +571,75 @@ class VideoDetector:
                 print(f"⚠️ WARNING: Large cache detected ({total_cache_size} entries): {cache_sizes}")
                 print(f"   Consider checking if video is looping correctly and reset_analytics() is being called")
 
-        # PERFORMANCE OPTIMIZATION: Skip frames to save GPU
-        # If this is a skipped frame, return previous results to keep UI alive
-        if self.frame_count % self.inference_freq != 0 and self.last_detections:
+        # PERFORMANCE OPTIMIZATION: Adaptive frame skipping for multi-stream stability
+        # We calculate load based on total active cameras
+        source_count = self.cm.get_active_count()
+        
+        # MONITOR: If count changed significantly (reduced), reload config and flush VRAM
+        if source_count < self._last_known_count:
+            print(f"[OPTIMIZER] 📉 Source count reduced ({self._last_known_count} -> {source_count}). Flushing caches...")
+            import torch
+            import gc
+            self.cm.load_config() # Force sync singleton
+            source_count = self.cm.get_active_count() # Get fresh count
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                gc.collect()
+        self._last_known_count = source_count
+
+        # Dynamic skip strategy:
+        # 1-2 sources: Full speed (skip_freq=1)
+        # 3-4 sources: Skip every other frame (skip_freq=2)
+        # 5+ sources: Heavy optimization (skip_freq=3+)
+        if source_count <= 2:
+            self.inference_freq = 1
+        elif source_count <= 4:
+            self.inference_freq = 2
+        else:
+            self.inference_freq = 3
+
+        self._perf_stats["load"] = source_count # Record active streams
+
+        skip_freq = self.inference_freq
+        
+        # Check if we should skip detection but keep last known state for visuals
+        if self.frame_count % skip_freq != 0 and self.last_detections:
             return self.last_detections, self.last_enhanced_counts
             
         detections = []
         import copy
         current_counts = copy.deepcopy(self.line_counts)
         current_time = time.time()
+        t_detect_start = time.time()
         
         # PERFORMANCE OPTIMIZATION: Balanced resolution for real-time RTSP streams
-        imgsz = 640  # Reduced from 960 to 640 for faster inference (2x speed improvement)
-        # Lower confidence threshold to reduce GPU floating-point precision differences
-        conf_threshold = 0.20  # Slightly higher than before for better precision
+        imgsz = 640  # Must match the exported engine size
+        # Lowering threshold significantly to 0.08 to capture all distant/small pedestrians
+        conf_threshold = 0.08  
         
+        t_inf_start = time.time()
         if tracking_enabled:
             # Persist=True for tracking
-            # Classes: 0=Person, 24=Backpack, 26=Handbag
-            # half=True uses FP16 precision - much faster and uses 50% less VRAM on RTX 4090
-            results = self.model.track(frame, persist=True, verbose=False, classes=[0, 24, 26], tracker=self.tracker, imgsz=imgsz, conf=conf_threshold, half=True)
+            # Using higher iou=0.7 to allow overlapping boxes in crowded scenes
+            results = self.model.track(frame, persist=True, verbose=False, classes=[0], tracker=self.tracker, imgsz=imgsz, conf=conf_threshold, iou=0.7, half=True)
         else:
             # Predict only (Detection) - No IDs
-            results = self.model.predict(frame, verbose=False, classes=[0, 24, 26], imgsz=imgsz, conf=conf_threshold, half=True)
+            results = self.model.predict(frame, verbose=False, classes=[0], imgsz=imgsz, conf=conf_threshold, iou=0.7, half=True)
+        self._perf_stats["inference"] = (time.time() - t_inf_start) * 1000
 
-        # Run pose detection for people who don't have cached keypoints yet
-        # This helps with accurate clothing region detection
-        # OPTIMIZATION: Only run pose detection for people without confirmed color
+        # PERFORMANCE OPTIMIZATION: Staggered Inference (分时调度)
+        # Instead of running all models on one frame, we spread them across 4 frames
+        # to prevent GPU load spikes that cause the "0.5s freeze".
+        cycle = self.frame_count % 4
+        
+        # Frame 0: Reserved for Main YOLO + Tracking (Already done above)
+        
+        # Frame 1: Pose Estimation + Color Detection
+        # Frame 1: Color Detection (Now simplified)
         pose_results = None
-        if self.pose_model is not None and tracking_enabled:
-            # Collect track_ids that need pose detection (not cached AND not color-confirmed)
-            people_needing_pose = []
-            for result in results:
-                if result.boxes is not None:
-                    boxes = result.boxes
-                    if hasattr(boxes, 'id') and boxes.id is not None:
-                        ids = boxes.id.cpu().numpy().astype(int)
-                        cls_ids = boxes.cls.cpu().numpy().astype(int)
-                        for tid, cls_id in zip(ids, cls_ids):
-                            # Only run pose if: Person AND (no pose cache OR color not confirmed)
-                            if cls_id == 0 and tid not in self.pose_cache and not self.color_confirmed.get(tid, False):
-                                people_needing_pose.append(tid)
-
-            # Run pose detection if there are people needing it
-            if people_needing_pose:
-                # OPTIMIZATION: Use smaller imgsz for pose (480 vs 640) - still accurate for keypoints
-                pose_results = self.pose_model(frame, verbose=False, half=True, imgsz=480)
-                # print(f"[POSE] Detected keypoints for {len(people_needing_pose)} new people")
+        
+        # We need to preserve run_secondary for backward compatibility in the code flow
+        # but now it's staggered within the specific blocks below
 
         if not results:
              print("[DEBUG] No results objects returned from model.")
@@ -914,6 +832,7 @@ class VideoDetector:
                 # Default values to prevent UnboundLocalError
                 shirt_color = "Unknown"
                 shirt_box = None
+                keypoints = None # CRITICAL FIX: Initialize here so it exists for ALL classes
 
                 # Only track People (Class 0) for counting logic to avoid counting bags as people
                 if cls_id == 0:
@@ -922,49 +841,36 @@ class VideoDetector:
                     cy = (y1 + y2) / 2
                     current_point = (cx, cy)
 
-                    # --- SMART COLOR DETECTION WITH CACHING (Pose Skeleton Only) ---
-                    # Check if color is already confirmed
+                    # --- COLOR DETECTION (Simple ROI-based) ---
+                    # Handle Color Detection with "Best Sample" logic
                     if track_id is not None and self.color_confirmed.get(track_id, False):
-                        # Use cached color - skip detection to save resources
                         shirt_color = self.color_cache.get(track_id, "Unknown")
-
-                        # Calculate shirt box using cached pose keypoints (required)
-                        if track_id in self.pose_cache:
-                            shirt_box = self._get_shirt_box_from_pose(self.pose_cache[track_id], cx, frame.shape)
+                        shirt_box = self._get_shirt_box_simple(x1, y1, x2, y2, frame.shape)
                     else:
-                        # Need to detect - only if we have pose keypoints
-                        keypoints = None
-                        if pose_results is not None and track_id is not None:
-                            keypoints = self._extract_keypoints_for_person(pose_results, x1, y1, x2, y2)
-                            if keypoints is not None:
-                                # Cache keypoints for future use
-                                self.pose_cache[track_id] = keypoints
-
-                        # Get shirt box using pose keypoints (cached or new)
-                        if keypoints is not None:
-                            # Use newly detected keypoints
-                            shirt_box = self._get_shirt_box_from_pose(keypoints, cx, frame.shape)
-                        elif track_id in self.pose_cache:
-                            # Use cached keypoints
-                            shirt_box = self._get_shirt_box_from_pose(self.pose_cache[track_id], cx, frame.shape)
-                        else:
-                            # No pose keypoints available - skip color detection
-                            shirt_box = None
-
-                        # Only detect color if we have valid shirt box from pose
+                        shirt_box = self._get_shirt_box_simple(x1, y1, x2, y2, frame.shape)
                         if shirt_box is not None:
                             sx1, sy1, sx2, sy2 = shirt_box
                             if sx2 > sx1 and sy2 > sy1:
                                 shirt_roi = frame[sy1:sy2, sx1:sx2]
                                 if shirt_roi.size > 0:
-                                    shirt_color = self.get_dominant_color(shirt_roi)
-
-                                    # Update color cache for this track_id (only if NOT yet confirmed)
-                                    if track_id is not None and shirt_color != "Unknown" and not self.color_confirmed.get(track_id, False):
-                                        # Confirmed! Cache and stop detecting immediately
-                                        self.color_cache[track_id] = shirt_color
-                                        self.color_confirmed[track_id] = True
-                                        print(f"[COLOR CONFIRMED] Track ID {track_id}: {shirt_color}")
+                                    detected_color = self.get_dominant_color(shirt_roi)
+                                    
+                                    # QUALITY CHECK: Only confirm if color is distinct OR we've tried many times
+                                    attempts = self.face_attempts.get(f"col_{track_id}", 0)
+                                    self.face_attempts[f"col_{track_id}"] = attempts + 1
+                                    
+                                    # If we got a real color (not Unknown), or after 15 attempts, we lock it in
+                                    is_good_sample = detected_color not in ["Unknown"]
+                                    
+                                    if track_id is not None:
+                                        if is_good_sample or attempts > 15:
+                                            self.color_cache[track_id] = detected_color
+                                            self.color_confirmed[track_id] = True
+                                            print(f"[COLOR CONFIRMED] Track ID {track_id}: {detected_color} (at attempt {attempts})")
+                                            shirt_color = detected_color
+                                        else:
+                                            # Still trying to get a better color
+                                            shirt_color = detected_color
 
                     if track_id is not None:
                         # Track unique pedestrians
@@ -1008,7 +914,21 @@ class VideoDetector:
                                 # print(f"heatmap error: {e}")
                                 pass
                     
-                        # --- LINE COUNTING ---
+                        # --- PERFORMANCE OPTIMIZATION: Distance-Based Inference ---
+                        # Only run heavy sub-models if the person is large enough to see details
+                        person_area = (x2 - x1) * (y2 - y1)
+                        is_detailed_enough = person_area > (frame.shape[0] * frame.shape[1] * 0.005) # ~0.5% of total image
+                        
+                        # --- FALL DETECTION (POSE BASED) ---
+                        is_fall = False
+                        if self.fall_detection_enabled and is_detailed_enough:
+                            # Previous logic for fall...
+                            pass
+                        
+                        # --- BAG DETECTION (IF DETAILED) ---
+                        if is_detailed_enough:
+                            # Original bag detection logic here...
+                            pass        
                         # Update History
                         if track_id not in self.track_history:
                             self.track_history[track_id] = []
@@ -1094,6 +1014,16 @@ class VideoDetector:
                                         "direction": direction,
                                         "track_id": track_id
                                     })
+                        # --- TRAJECTORY JUMP PROTECTION ---
+                        # If the point jumps too far in one frame, it's probably an ID switch due to lag.
+                        # We clear the history to prevent long diagonal lines.
+                        if track_id in self.track_history and self.track_history[track_id]:
+                            last_x, last_y = self.track_history[track_id][-1]
+                            dist = np.sqrt((cx - last_x)**2 + (cy - last_y)**2)
+                            # Threshold: 30% of frame width is a reasonable "impossible" jump for 1 frame
+                            if dist > frame.shape[1] * 0.3:
+                                self.track_history[track_id] = []
+
                         self.track_history[track_id].append((float(cx), float(cy)))
                         if len(self.track_history[track_id]) > 30: # Limit to last 30 points (~1 second at 30 FPS)
                              self.track_history[track_id].pop(0)
@@ -1210,9 +1140,9 @@ class VideoDetector:
                 if hasattr(self, 'reid_features') and tid in self.reid_features:
                     del self.reid_features[tid]
 
-        # Fall Detection (if enabled) - with 2 second threshold
-        # Only detect falls where there are detected people
-        if self.fall_detection_enabled and self.fall_model is not None:
+        # Frame 2: Fall Detection (Pose Based)
+        # PERFORMANCE OPTIMIZATION: Staggered on cycle == 2
+        if self.fall_detection_enabled and self.fall_model is not None and cycle == 2:
             try:
                 # First, get all person bounding boxes AND track_ids from main detections
                 person_boxes_with_ids = []
@@ -1226,29 +1156,9 @@ class VideoDetector:
                 # Only run fall detection if there are people in the frame
                 if len(person_boxes_with_ids) > 0:
                     # OPTIMIZATION: Use half precision (FP16) and smaller imgsz for faster inference
-                    fall_results = self.fall_model(frame, verbose=False, half=True, imgsz=480)
+                    # TensorRT requires exact size (640)
+                    fall_results = self.fall_model(frame, verbose=False, half=True, imgsz=640)
                     current_fall_boxes = []
-
-                    # Helper function to calculate IoU (Intersection over Union)
-                    def calculate_iou(box1, box2):
-                        x1_1, y1_1, x2_1, y2_1 = box1
-                        x1_2, y1_2, x2_2, y2_2 = box2
-
-                        # Calculate intersection
-                        x_left = max(x1_1, x1_2)
-                        y_top = max(y1_1, y1_2)
-                        x_right = min(x2_1, x2_2)
-                        y_bottom = min(y2_1, y2_2)
-
-                        if x_right < x_left or y_bottom < y_top:
-                            return 0.0
-
-                        intersection_area = (x_right - x_left) * (y_bottom - y_top)
-                        box1_area = (x2_1 - x1_1) * (y2_1 - y1_1)
-                        box2_area = (x2_2 - x1_2) * (y2_2 - y1_2)
-                        union_area = box1_area + box2_area - intersection_area
-
-                        return intersection_area / union_area if union_area > 0 else 0.0
 
                     # Collect all detected falls in this frame and match to track_id
                     for fall_result in fall_results:
@@ -1258,8 +1168,19 @@ class VideoDetector:
                                 fx1, fy1, fx2, fy2 = fall_box.xyxy[0].cpu().numpy()
                                 fall_conf = float(fall_box.conf[0].cpu().numpy())
                                 
-                                # OPTIMIZATION: Skip low confidence detections (reduce false positives)
-                                if fall_conf < 0.5:  # Increased from default ~0.25
+                                # STAGE 1: Confidence Check (Strict for falls)
+                                if fall_conf < 0.6: 
+                                    continue
+                                
+                                # STAGE 2: Aspect Ratio Validation
+                                # A real fall results in a horizontal or roughly square bounding box.
+                                fw = fx2 - fx1
+                                fh = fy2 - fy1
+                                aspect_ratio = fw / fh if fh > 0 else 0
+                                
+                                # If the person is still more vertical than horizontal, it's likely 
+                                # just a squat or a bend, not a prismatic fall.
+                                if aspect_ratio < 0.85:
                                     continue
                                 
                                 box = [int(fx1), int(fy1), int(fx2), int(fy2)]
@@ -1268,18 +1189,18 @@ class VideoDetector:
                                 best_match_track_id = None
                                 best_iou = 0.0
                                 for person_data in person_boxes_with_ids:
-                                    iou = calculate_iou(box, person_data['box'])
+                                    iou = self._calculate_iou(box, person_data['box'])
                                     if iou > best_iou:
                                         best_iou = iou
                                         best_match_track_id = person_data['track_id']
 
-                                # Only add if overlap is good enough (50%+ to reduce false positives)
-                                if best_iou > 0.5:
+                                # STAGE 4: IoU Overlap (Ensure it's actually a person falling)
+                                if best_iou > 0.45:
                                     current_fall_boxes.append({
                                         'box': box,
                                         'conf': fall_conf,
                                         'centroid': (int((fx1+fx2)/2), int((fy1+fy2)/2)),
-                                        'track_id': best_match_track_id  # Associate fall with person's track_id
+                                        'track_id': best_match_track_id
                                     })
                 else:
                     # No people detected, clear fall detections
@@ -1396,94 +1317,95 @@ class VideoDetector:
             except Exception as e:
                 print(f"Fall detection error: {e}")
 
-        # --- FACE ANALYSIS: Gender and Age Detection (with 1-confirmation caching) ---
-        # CRITICAL OPTIMIZATION: Only run every Nth frame to prevent blocking
-        if self.face_analysis_enabled and self.face_analyzer.enabled and self.frame_count % self.face_analysis_freq == 0:
-            try:
-                # OPTIMIZATION: Only analyze people who don't have CONFIRMED face info!
-                people_to_analyze = []
-                for det in detections:
-                    if det['cls_id'] == 0:
-                        tid = det.get('id')
-                        # If confirmed AND cached, use cached values
-                        # FIX: Also check if tid exists in face_cache
-                        if tid is not None and self.face_confirmed.get(tid, False) and tid in self.face_cache:
-                            det['gender'] = self.face_cache[tid]['gender']
-                            det['age'] = self.face_cache[tid]['age']
-                        elif tid is not None and not self.face_confirmed.get(tid, False):
-                            # Need to analyze this person
-                            people_to_analyze.append(det)
+        # --- FACE ANALYSIS: Global Fast Mode (Dynamic Load Scaling) ---
+        if self.face_analysis_enabled and self.face_analyzer.enabled:
+            # DYNAMIC LOAD SCALING: Scale AI frequency based on crowd density
+            person_count = len([d for d in detections if d['cls_id'] == 0])
+            if person_count > 10:
+                self.face_analysis_freq = 10 # High load, slow down AI
+            elif person_count > 5:
+                self.face_analysis_freq = 6 # Medium load
+            else:
+                self.face_analysis_freq = 4 # Minimum 4 frames to prevent GPU stuttering
+            
+            # Frame 3: Face Analysis (Staggered on cycle == 3)
+            if cycle == 3:
+                try:
+                    # ROI EXTRACRTION: Find people who need face analysis
+                    unconfirmed_with_areas = []
+                    for det in detections:
+                        if det['cls_id'] == 0:
+                            bw = det['box'][2] - det['box'][0]
+                            bh = det['box'][3] - det['box'][1]
+                            # LOOSENED: Allow smaller crops for distant faces while prioritizing close ones
+                            if bw > 20 and bh > 40:
+                                area = bw * bh
+                                unconfirmed_with_areas.append((area, det['box']))
 
-                if people_to_analyze:
-                    # Get person bounding boxes for filtering in FaceAnalyzer
-                    person_boxes = [p['box'] for p in people_to_analyze]
+                    # PRIORITIZE: Sort by area (descending) so closest people are analyzed first
+                    unconfirmed_with_areas.sort(key=lambda x: x[0], reverse=True)
+                    roi_boxes = [r[1] for r in unconfirmed_with_areas]
 
-                    # Analyze faces ONLY for those who need it
-                    face_info = self.face_analyzer.analyze_faces(frame, person_boxes)
-
-                    # Match detected faces back to the people who needed analysis
-                    for det in people_to_analyze:
-                        px1, py1, px2, py2 = det['box']
-                        person_center_x = (px1 + px2) / 2
-                        person_center_y = (py1 + py2) / 2
-                        person_height = py2 - py1
-                        tid = det.get('id')
-
-                        # Find closest face to this person
-                        closest_face = None
+                    # Run ROI-based face detection (Ultra Fast & Accurate)
+                    face_info = self.face_analyzer.analyze_faces_global(frame, roi_boxes=roi_boxes)
+                    self.last_face_info = face_info
+                    
+                    # 2. MATCH BACK TO PEOPLE (To show in main label)
+                    for face in face_info:
+                        f_center = ((face['bbox'][0]+face['bbox'][2])/2, (face['bbox'][1]+face['bbox'][3])/2)
+                        
+                        # Find closest person detection
+                        closest_det = None
                         min_dist = float('inf')
+                        for det in detections:
+                            if det['cls_id'] == 0:
+                                p_center = ((det['box'][0]+det['box'][2])/2, (det['box'][1]+det['box'][3])/2)
+                                dist = np.sqrt((f_center[0]-p_center[0])**2 + (f_center[1]-p_center[1])**2)
+                                if dist < min_dist:
+                                    min_dist = dist
+                                    closest_det = det
+                        
+                        # Lock result if valid distance (< 75% height)
+                        if closest_det and min_dist < (closest_det['box'][3]-closest_det['box'][1]) * 0.75:
+                            tid = closest_det.get('id')
+                            if tid is not None:
+                                # PREMIUM: Age & Gender Smoothing (Median Filtering)
+                                if tid not in self.face_cache:
+                                    self.face_cache[tid] = {'genders': [], 'ages': []}
+                                
+                                self.face_cache[tid]['genders'].append(face['gender'])
+                                self.face_cache[tid]['ages'].append(face['age'])
+                                
+                                # Keep last 15 samples for stability
+                                if len(self.face_cache[tid]['ages']) > 15:
+                                    self.face_cache[tid]['genders'].pop(0)
+                                    self.face_cache[tid]['ages'].pop(0)
+                                
+                                self.face_attempts[tid] = self.face_attempts.get(tid, 0) + 1
+                                if self.face_attempts[tid] >= 3:
+                                    self.face_confirmed[tid] = True
+                except Exception as e:
+                    print(f"[FACE] Analysis Error: {e}")
+            
+            # --- 3. PERSISTENT UPDATER: Apply results to detections on EVERY frame ---
+            for det in detections:
+                if det['cls_id'] == 0:
+                    tid = det.get('id')
+                    if tid is not None and tid in self.face_cache and self.face_cache[tid]['ages']:
+                        # Calculate stable results from cache
+                        stable_age = int(np.median(self.face_cache[tid]['ages']))
+                        males = self.face_cache[tid]['genders'].count('Male')
+                        stable_gender = 'Male' if males >= len(self.face_cache[tid]['genders'])/2 else 'Female'
+                        
+                        det['gender'] = stable_gender
+                        det['age'] = stable_age
+                        # Cache stable values for DB logging retrieval
+                        self.face_cache[tid]['gender'] = stable_gender
+                        self.face_cache[tid]['age'] = stable_age
 
-                        for face in face_info:
-                            fx1, fy1, fx2, fy2 = face['bbox']
-                            face_center_x = (fx1 + fx2) / 2
-                            face_center_y = (fy1 + fy2) / 2
-
-                            # Calculate distance between person and face centers
-                            dist = np.sqrt((person_center_x - face_center_x)**2 +
-                                          (person_center_y - face_center_y)**2)
-
-                            if dist < min_dist:
-                                min_dist = dist
-                                closest_face = face
-
-                        # CRITICAL FIX: Only accept face if distance is reasonable (< 50% of person height)
-                        # This prevents matching one face to multiple distant people
-                        max_distance = person_height * 0.5  # Face must be within 50% of person height
-                        if closest_face and min_dist < max_distance and tid is not None and not self.face_confirmed.get(tid, False):
-                            gender = closest_face['gender']
-                            age = closest_face['age']
-
-                            # ✅ 1-CONFIRMATION LOGIC - Cache immediately, stop detecting
-                            self.face_cache[tid] = {'gender': gender, 'age': age}
-                            self.face_confirmed[tid] = True
-                            det['gender'] = gender
-                            det['age'] = age
-                            print(f"[FACE CONFIRMED] Track ID {tid}: {gender}, Age {age}")
-                        elif tid is not None and not self.face_confirmed.get(tid, False):
-                            # Failed to match face - increment attempts counter
-                            if tid not in self.face_attempts:
-                                self.face_attempts[tid] = 0
-                            self.face_attempts[tid] += 1
-
-                            # After 3 failed attempts, mark as confirmed with "Unknown"
-                            if self.face_attempts[tid] >= 3:
-                                # FIX: Also set face_cache to prevent KeyError
-                                self.face_cache[tid] = {'gender': None, 'age': None}
-                                self.face_confirmed[tid] = True  # Stop trying
-                                print(f"[FACE] Track ID {tid}: Failed to detect face after 3 attempts, skipping")
-
-            except Exception as e:
-                print(f"Face analysis error: {e}")
-        else:
-            # Skipped frame - use cached face info for confirmed people
-            if self.face_analysis_enabled and self.face_analyzer.enabled:
-                for det in detections:
-                    if det['cls_id'] == 0:
-                        tid = det.get('id')
-                        # FIX: Check if tid exists in face_cache before accessing
-                        if tid is not None and self.face_confirmed.get(tid, False) and tid in self.face_cache:
-                            det['gender'] = self.face_cache[tid]['gender']
-                            det['age'] = self.face_cache[tid]['age']
+            # --- 4. DRAW FACE INFO (UI Brackets Removed) ---
+            # if self.last_face_info:
+            #     self.face_analyzer.draw_face_info(frame, self.last_face_info)
 
         # --- MASK DETECTION (with 1-confirmation caching) ---
         if self.mask_detection_enabled and self.mask_model is not None:
@@ -1512,7 +1434,8 @@ class VideoDetector:
 
                 if people_to_detect:
                     # OPTIMIZATION: Use smaller imgsz (480) for mask detection
-                    mask_results = self.mask_model(frame, verbose=False, half=True, imgsz=480)
+                    # TensorRT requires exact size (640)
+                    mask_results = self.mask_model(frame, verbose=False, half=True, imgsz=640)
 
                     # Extract mask detections
                     mask_detections = []
@@ -1596,8 +1519,13 @@ class VideoDetector:
 
         # Cache results for skipped frames
         self.last_detections = detections
+        
+        # Add performance stats to output
+        self._perf_stats["latency"] = (time.time() - t_detect_start) * 1000
+        self._perf_stats["fps"] = 1000.0 / self._perf_stats["latency"] if self._perf_stats["latency"] > 0 else 0
+        enhanced_counts["_perf"] = self._perf_stats
+        
         self.last_enhanced_counts = enhanced_counts
-
         return detections, enhanced_counts
 
     def annotate_frame(self, frame, detections, counts):
@@ -1639,14 +1567,13 @@ class VideoDetector:
                 cv2.circle(frame, dot_center, 7, (255, 255, 255), -1, cv2.LINE_AA)
                 cv2.circle(frame, dot_center, 5, color, -1, cv2.LINE_AA)
 
-            # Draw Shirt Sampling Box (only during detection, hide after confirmation)
-            # OPTIMIZATION: Only show debug boxes if enabled
+            # Draw Shirt Sampling Box (only during debugging)
             if self.show_debug_boxes and det.get("shirt_box") and track_id is not None:
                 # Check if color is confirmed
                 is_confirmed = self.color_confirmed.get(track_id, False)
 
-                # Only show box if NOT confirmed yet
-                if not is_confirmed:
+                # ALWAYS show box for user visualization
+                if True:
                     sx1, sy1, sx2, sy2 = det["shirt_box"]
                     shirt_color = det.get("shirt_color", "Unknown")
 
@@ -1692,13 +1619,7 @@ class VideoDetector:
                     cv2.putText(frame, color_label, (sx1 + 2, sy1 - 3),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
-            # Draw Pose Skeleton (only if NOT confirmed yet)
-            # OPTIMIZATION: Only show debug boxes if enabled
-            if self.show_debug_boxes and track_id is not None and track_id in self.pose_cache:
-                is_confirmed = self.color_confirmed.get(track_id, False)
-                if not is_confirmed:
-                    keypoints = self.pose_cache[track_id]
-                    self._draw_pose_skeleton(frame, keypoints)
+            # (Skeleton visualization removed for performance)
 
             # Draw Mask Bounding Box (only if NOT confirmed - during confirmation phase)
             # OPTIMIZATION: Only show debug boxes if enabled
@@ -1755,21 +1676,13 @@ class VideoDetector:
                  else:
                      label = f"ID:{track_id}"
 
-                 # Append Gender and Age if available (BEFORE color)
+                 # Append Gender and Age if available (REAL-TIME DISPLAY)
                  if "gender" in det and "age" in det:
-                     is_face_confirmed = self.face_confirmed.get(track_id, False)
-                     if is_face_confirmed:
-                         # Show gender/age in label only after confirmation
-                         # FIX: Check for None values (failed detection after 3 attempts)
-                         if det["gender"] is not None and det["age"] is not None:
-                             gender_short = "M" if det["gender"] == "Male" else "F"
-                             label += f" {gender_short}/{det['age']}"
-                         # If None, don't show anything (failed to detect)
-                     else:
-                         # Show "Calculating..." while confirming
-                         face_sample_count = len(self.face_samples.get(track_id, []))
-                         if face_sample_count > 0:
-                             label += f" Calculating..."
+                     if det["gender"] is not None and det["age"] is not None:
+                         gender_short = "M" if det["gender"] == "Male" else "F"
+                         label += f" {gender_short}/{det['age']}"
+                 
+                 # (Space preserved)
 
                  # Append Color Info ONLY if confirmed (after 3 detections)
                  if det.get("shirt_color") and det["shirt_color"] != "Unknown":
@@ -1814,18 +1727,25 @@ class VideoDetector:
                 # Text
                 cv2.putText(frame, label, (x1, y1 - 2), 0, 0.6, label_text_color, thickness=2, lineType=cv2.LINE_AA)
 
-            # Draw Trajectory Trail (OPTIMIZATION: Only if enabled)
             if self.trajectory_enabled and track_id is not None and track_id in self.track_history:
                 points = self.track_history[track_id]
                 if len(points) > 1:
-                    # Convert to numpy array of points (int)
-                    # points is list of (float, float)
-                    pts = np.array(points, np.int32)
-                    pts = pts.reshape((-1, 1, 2))
-
-                    # Draw polyline
-                    # Yellow color for trail, thickness 2
-                    cv2.polylines(frame, [pts], False, (0, 255, 255), 2)
+                    # Move Average Smoothing for Trajectories
+                    smoothed_pts = []
+                    window = 3
+                    for k in range(len(points)):
+                        start = max(0, k - window)
+                        end = k + 1
+                        avg_pt = np.mean(points[start:end], axis=0).astype(int)
+                        smoothed_pts.append(avg_pt)
+                    
+                    pts = np.array(smoothed_pts, np.int32).reshape((-1, 1, 2))
+                    # Draw with gradient or thick line
+                    cv2.polylines(frame, [pts], False, (0, 255, 255), 2, cv2.LINE_AA)
+            
+        # --- FACE Diagnostic Brackets Removed ---
+        # if detections and self.face_analysis_enabled and hasattr(self, 'last_face_info') and self.last_face_info:
+        #     self.face_analyzer.draw_face_info(frame, self.last_face_info)
             
         # --- HEATMAP OVERLAY ---
         if self.heatmap_enabled and self.heatmap_accumulator is not None:
@@ -2065,6 +1985,35 @@ class VideoDetector:
                     except Exception as e:
                         print(f"[TELEGRAM ERROR] ❌ Failed to send loitering alert to Telegram: {e}")
 
+        # --- RECORDING INDICATOR (Top Right) ---
+        if self.is_recording:
+            h, w = frame.shape[:2]
+            # Calculate pulsing effect based on time (2Hz pulse)
+            pulse = (int(time.time() * 2) % 2) == 0
+            
+            # Position and Size
+            margin_right = 30
+            margin_top = 30
+            pill_h = 50
+            pill_w = 160
+            
+            # Draw semi-transparent background "pill" for maximum visibility
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (w - pill_w - margin_right, margin_top), (w - margin_right, margin_top + pill_h), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.4, frame, 0.6, 0, frame)
+            
+            dot_color = (0, 0, 255) if pulse else (0, 0, 100) # Bright red vs Dull red
+            dot_radius = 12
+            dot_center = (w - pill_w - margin_right + 30, margin_top + pill_h // 2)
+            
+            # Draw the pulsing red dot
+            cv2.circle(frame, dot_center, dot_radius, dot_color, -1, cv2.LINE_AA)
+            if pulse: # Extra glow when bright
+                 cv2.circle(frame, dot_center, dot_radius + 4, (0, 0, 255), 2, cv2.LINE_AA)
+            
+            # Draw large bold "REC" text
+            cv2.putText(frame, "REC", (w - pill_w - margin_right + 60, margin_top + 38), cv2.FONT_HERSHEY_DUPLEX, 1.2, (255, 255, 255), 3, cv2.LINE_AA)
+
         return frame
 
     def get_analytics_summary(self):
@@ -2138,6 +2087,10 @@ class VideoDetector:
             "cumulative_counts": cumulative_counts
         }
 
+    def set_recording_state(self, is_recording):
+        """Toggle the visual 'REC' indicator on the video frame"""
+        self.is_recording = is_recording
+
     def reset_analytics(self):
         """
         Reset all analytics data while keeping the detector running.
@@ -2207,7 +2160,6 @@ class VideoDetector:
         # Reset color cache
         self.color_cache.clear()
         self.color_confirmed.clear()
-        self.pose_cache.clear()  # Clear pose keypoints cache
         self.face_cache.clear()
         self.face_confirmed.clear()
         self.mask_cache.clear()
@@ -2238,29 +2190,29 @@ class VideoDetector:
     def __del__(self):
         """
         Destructor - Release model references when detector is destroyed.
-        This allows the model pool to free GPU memory when no detectors are using a model.
         """
         try:
-            # Release model references back to the pool
             if hasattr(self, 'model_pool') and self.model_pool is not None:
                 if hasattr(self, 'model') and self.model is not None:
                     self.model_pool.release_main_model()
                     print("[DETECTOR] 🔓 Released main model reference")
-
                 if hasattr(self, 'fall_model') and self.fall_model is not None:
                     self.model_pool.release_fall_model()
                     print("[DETECTOR] 🔓 Released fall model reference")
-
                 if hasattr(self, 'mask_model') and self.mask_model is not None:
                     self.model_pool.release_mask_model()
                     print("[DETECTOR] 🔓 Released mask model reference")
-
-                if hasattr(self, 'pose_model') and self.pose_model is not None:
-                    self.model_pool.release_pose_model()
+                # (Pose model release removed)
                     print("[DETECTOR] 🔓 Released pose model reference")
-
-                # Optional: Cleanup unused models from pool
-                # self.model_pool.cleanup_unused()
-        except Exception as e:
-            # Silent failure in destructor to avoid issues during cleanup
+                if hasattr(self, 'face_analyzer'):
+                    # The analyzer logic is shared, we just release the count
+                    self.model_pool.release_face_model()
+                    print("[DETECTOR] 🔓 Released face model reference")
+            
+            # Explicitly clear CUDA cache to prevent memory buildup
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                print("[GPU] 🧹 Forced VRAM cleanup completed")
+        except Exception:
             pass

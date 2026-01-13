@@ -7,7 +7,7 @@
         "database": "test"
     },
     "yolo": {
-        "model_path": "models\\yolov8m.pt"
+        "model_path": "models\\yolov8n.engine"
     },
     "thresholds": {
         "warning": 20,
@@ -15,12 +15,14 @@
     },
     "video_sources": [
         {
-            "id": "0bad4fda",
-            "name": "Source 0bad4fda",
+            "id": "2f5dba31",
+            "name": "Source 2f5dba31",
             "location": "",
-            "type": "url",
-            "path": "",
-            "danger_threshold": 100
+            "type": "file",
+            "path": "C:/Users/Charles/Desktop/footage/pedestrain2.mp4",
+            "danger_threshold": 100,
+            "loitering_threshold": 5,
+            "fall_threshold": 2
         }
     ]
 }

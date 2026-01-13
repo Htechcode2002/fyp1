@@ -230,27 +230,34 @@ class VideoSourceCard(QFrame):
         self.camera_selector = QComboBox()
         self.camera_selector.setStyleSheet("""
             QComboBox {
-                padding: 8px 12px;
+                padding: 10px 15px;
                 border: 1px solid #e2e8f0;
-                border-radius: 6px;
-                background-color: white; color: #333;
+                border-radius: 8px;
+                background-color: white; color: #1e293b;
+                font-weight: 600;
             }
-            QComboBox:focus { border: 1px solid #3b82f6; }
-            QComboBox::drop-down { border: none; }
+            QComboBox:hover { border-color: #cbd5e1; }
+            QComboBox:focus { border: 2px solid #3b82f6; background-color: #f0f9ff; }
+            QComboBox::drop-down { border: none; width: 30px; }
+            QComboBox::down-arrow { image: none; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #64748b; margin-top: 2px; }
         """)
-        self.camera_selector.addItem("Camera 0 (Default)", 0)
-        self.camera_selector.addItem("Camera 1", 1)
-        self.camera_selector.addItem("Camera 2", 2)
-        self.camera_selector.addItem("Camera 3", 3)
+        self.camera_selector.addItem("✨ Auto Detect (Recommended)", "auto")
+        self.camera_selector.addItem("📸 Camera 0 (System Default)", "0")
+        self.camera_selector.addItem("📸 Camera 1", "1")
+        self.camera_selector.addItem("📸 Camera 2", "2")
+        self.camera_selector.addItem("📸 Camera 3", "3")
         self.camera_selector.setVisible(False)
 
         # Set saved camera index if available
         if self.source_data.get("type") == "camera" and "path" in self.source_data:
-            try:
-                cam_idx = int(self.source_data["path"])
-                self.camera_selector.setCurrentIndex(cam_idx)
-            except:
-                pass
+            saved_path = str(self.source_data["path"])
+            index = self.camera_selector.findData(saved_path)
+            if index >= 0:
+                self.camera_selector.setCurrentIndex(index)
+            else:
+                self.camera_selector.setCurrentIndex(0) # Default to Auto
+        else:
+            self.camera_selector.setCurrentIndex(0) # Default to Auto
 
         # RTSP/CCTV Configuration Form
         self.rtsp_form = QFrame()
@@ -742,73 +749,6 @@ class VideoSourceCard(QFrame):
         return data
 
 
-class ColorRangeVisualizer(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMinimumHeight(120)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        
-        # Ranges matching detection.py (Hue: 0-179)
-        self.ranges = [
-            (0, 10, "Red"),
-            (10, 25, "Orange"),
-            (25, 35, "Yellow"),
-            (35, 95, "Green"),
-            (95, 135, "Blue"),
-            (135, 160, "Purple"),
-            (160, 180, "Red")
-        ]
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        
-        w = self.width()
-        bar_h = 40
-        bar_y = 40
-        
-        # 1. Draw Spectrum Gradient
-        grad = QLinearGradient(0, bar_y, w, bar_y)
-        grad.setColorAt(0.0, QColor(255, 0, 0))       # 0
-        grad.setColorAt(15/180, QColor(255, 128, 0))  # ~15 Orange
-        grad.setColorAt(30/180, QColor(255, 255, 0))  # 30 Yellow
-        grad.setColorAt(60/180, QColor(0, 255, 0))    # 60 Green
-        grad.setColorAt(90/180, QColor(0, 255, 255))  # 90 Cyan
-        grad.setColorAt(120/180, QColor(0, 0, 255))   # 120 Blue
-        grad.setColorAt(150/180, QColor(255, 0, 255)) # 150 Magenta
-        grad.setColorAt(1.0, QColor(255, 0, 0))       # 180 Red
-        
-        painter.setBrush(QBrush(grad))
-        painter.setPen(Qt.NoPen)
-        painter.drawRoundedRect(0, bar_y, w, bar_h, 4, 4)
-        
-        # 2. Draw Range Markers and Labels
-        painter.setPen(QPen(QColor(50, 50, 50), 2))
-        font = QFont("Arial", 9, QFont.Bold)
-        painter.setFont(font)
-        
-        for start_h, end_h, label in self.ranges:
-            # Calculate x positions
-            x_start = int((start_h / 180.0) * w)
-            x_end = int((end_h / 180.0) * w)
-            x_center = int((x_start + x_end) / 2)
-            
-            # Draw Divider Line (at start)
-            painter.drawLine(x_start, bar_y - 5, x_start, bar_y + bar_h + 5)
-            
-            # Draw Value Label ( Hue Number )
-            painter.drawText(x_start - 10, bar_y + bar_h + 20, str(start_h))
-            
-            # Draw Color Name Label
-            text_y = bar_y - 10
-            if label == "Orange" or label == "Yellow":
-                text_y = bar_y - 22
-                
-            painter.drawText(x_center - 15, text_y, label)
-            
-        # End marker
-        painter.drawLine(w-1, bar_y - 5, w-1, bar_y + bar_h + 5)
-        painter.drawText(w - 20, bar_y + bar_h + 20, "180")
 
 
 class ConfigPage(QWidget):
@@ -839,10 +779,8 @@ class ConfigPage(QWidget):
         layout.addWidget(lbl_sub)
         
         # Sections
-        self.create_section(layout, "Database Configuration", self.create_db_form())
         self.create_section(layout, "YOLO Model Configuration", self.create_yolo_form())
         self.create_section(layout, "Video Sources Management", self.create_video_form())
-        self.create_section(layout, "Color Detection Settings", self.create_color_form())
         
         layout.addStretch()
         
@@ -858,19 +796,6 @@ class ConfigPage(QWidget):
         box.add_widget(content_widget)
         parent_layout.addWidget(box)
 
-    def create_db_form(self):
-        widget = QWidget()
-        form = QFormLayout(widget)
-        form.setSpacing(15)
-        
-        inp_host = QLineEdit("localhost")
-        inp_port = QLineEdit("3306")
-        for inp in [inp_host, inp_port]:
-            inp.setStyleSheet("padding: 10px; border: 1px solid #e2e8f0; border-radius: 6px;")
-            
-        form.addRow("Host:", inp_host)
-        form.addRow("Port:", inp_port)
-        return widget
 
     def create_yolo_form(self):
         widget = QWidget()
@@ -957,35 +882,6 @@ class ConfigPage(QWidget):
         
         return wrapper
 
-    def create_color_form(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setSpacing(15)
-        
-        label = QLabel("Visual Representation of Hue Ranges used in Detection:")
-        label.setStyleSheet("color: #64748b; font-size: 13px;")
-        layout.addWidget(label)
-        
-        # We need to ensure ColorRangeVisualizer is available. 
-        # Since it's defined later in the file, we might need to move this method or the class.
-        # But python allows using names if they are defined before execution.
-        # Since ConfigPage uses it in __init__, and __init__ runs at runtime, as long as ColorRangeVisualizer is defined in the module, it's fine?
-        # Actually classes are defined linearly. ConfigPage is defined *before* ColorRangeVisualizer in the current file structure (I appended Visualizer at the end).
-        # So ConfigPage won't see ColorRangeVisualizer if it's defined after.
-        # I MUST move ColorRangeVisualizer BEFORE ConfigPage or use specific imports.
-        # Or just import it if it was in another file.
-        
-        # To be safe, I will define ColorRangeVisualizer *before* ConfigPage in the next step.
-        # For now, I'll add the method, but I know I need to move the class.
-        
-        viz = ColorRangeVisualizer()
-        layout.addWidget(viz)
-        
-        info = QLabel("Low Saturation (<40) is classified as White/Gray/Black depending on Brightness. Hues only apply when colored.")
-        info.setStyleSheet("color: #64748b; font-size: 11px; font-style: italic;")
-        layout.addWidget(info)
-        
-        return widget
 
     def add_video_card(self, source_data):
         card = VideoSourceCard(source_data=source_data, onDelete=self.remove_video_card)
@@ -1009,11 +905,12 @@ class ConfigPage(QWidget):
         self.add_video_card(new_data)
 
     def remove_video_card(self, card):
-        source_data = card.source_data
+        source_id = card.source_id
         sources = self.cm.get("video_sources", [])
-        if source_data in sources:
-            sources.remove(source_data)
-            self.cm.set("video_sources", sources)
+        
+        # Find and remove by ID (much safer than dict matching)
+        sources = [s for s in sources if s.get("id") != source_id]
+        self.cm.set("video_sources", sources)
         
         self.video_layout.removeWidget(card)
         card.deleteLater()

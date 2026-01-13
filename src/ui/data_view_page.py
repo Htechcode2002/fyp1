@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushB
                                QDateEdit, QDateTimeEdit, QLineEdit, QFrame, QMessageBox, QFileDialog,
                                QCheckBox, QGridLayout, QScrollArea, QCalendarWidget)
 from PySide6.QtCore import Qt, QTimer, QDate, QDateTime, QThread, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QPixmap
 from src.core.database import DatabaseManager
 from src.core.config_manager import ConfigManager
 from datetime import datetime, timedelta
@@ -95,34 +95,70 @@ class DataLoaderThread(QThread):
 
 
 class StatCard(QFrame):
-    """简洁的统计卡片"""
+    """Refined minimalist statistics card with premium icon badges"""
     def __init__(self, title, value, icon, color):
         super().__init__()
         self.setFixedHeight(100)
+        
         self.setStyleSheet(f"""
-            QFrame {{
+            StatCard {{
                 background-color: white;
-                border-radius: 10px;
-                border: 2px solid {color};
+                border-radius: 12px;
+                border: 1px solid #e2e8f0;
+            }}
+            StatCard:hover {{
+                border-color: {color};
+                background-color: #f8fafc;
             }}
         """)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(5)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(20, 15, 20, 15)
+        layout.setSpacing(15)
 
+        # Icon Badge (The colored pod)
+        icon_container = QFrame()
+        icon_container.setFixedSize(48, 48)
+        # Use a very light/transparent version of the theme color
+        icon_container.setStyleSheet(f"""
+            QFrame {{
+                background-color: {color}15; 
+                border-radius: 14px;
+                border: 2px solid {color}30;
+            }}
+        """)
+        icon_layout = QVBoxLayout(icon_container)
+        icon_layout.setContentsMargins(0, 0, 0, 0)
+        icon_layout.setSpacing(0)
+        
+        icon_btn_lbl = QLabel(icon)
+        icon_btn_lbl.setAlignment(Qt.AlignCenter)
+        icon_btn_lbl.setStyleSheet(f"font-size: 22px; color: {color}; background: transparent; font-weight: bold;")
+        icon_layout.addWidget(icon_btn_lbl)
+        
+        layout.addWidget(icon_container)
+
+        # Content Layout
+        content_layout = QVBoxLayout()
+        content_layout.setSpacing(0)
+        content_layout.setAlignment(Qt.AlignVCenter)
+        
         # Title
-        title_label = QLabel(title)
-        title_label.setStyleSheet("font-size: 11px; color: #64748b; font-weight: bold;")
-        layout.addWidget(title_label)
+        title_label = QLabel(title.upper())
+        title_label.setStyleSheet(f"font-size: 10px; color: #64748b; font-weight: 800; letter-spacing: 1.2px;")
+        content_layout.addWidget(title_label)
 
         # Value
         self.value_label = QLabel(value)
-        self.value_label.setStyleSheet(f"font-size: 32px; color: {color}; font-weight: bold;")
-        layout.addWidget(self.value_label)
+        self.value_label.setStyleSheet(f"font-size: 32px; color: #1e293b; font-weight: 900; letter-spacing: -0.5px;")
+        self.value_label.setObjectName("value")
+        content_layout.addWidget(self.value_label)
+        
+        layout.addLayout(content_layout)
+        layout.addStretch()
 
     def update_value(self, value):
-        self.value_label.setText(value)
+        self.value_label.setText(str(value))
 
 
 class DataViewPage(QWidget):
@@ -136,13 +172,19 @@ class DataViewPage(QWidget):
 
         self.init_ui()
 
-        # Auto-refresh every 30 seconds
+        # Auto-refresh every 60 seconds (Smart refresh)
         self.refresh_timer = QTimer(self)
-        self.refresh_timer.timeout.connect(self.load_data)
-        self.refresh_timer.start(30000)
+        self.refresh_timer.timeout.connect(self.refresh_current_view)
+        self.refresh_timer.start(60000)
 
         # Initial load
         QTimer.singleShot(500, self.load_data)
+
+    def refresh_page(self):
+        """Public method to refresh the page state (e.g. video IDs)"""
+        self.populate_video_ids()
+        # Optionally reload data if needed, or wait for timer
+        # self.load_data()
 
     def init_ui(self):
         """Initialize the UI"""
@@ -153,53 +195,27 @@ class DataViewPage(QWidget):
         # === Header ===
         header_layout = QHBoxLayout()
 
-        title = QLabel("📊 Database Records")
-        title.setStyleSheet("font-size: 26px; font-weight: bold; color: #1e293b;")
+        title = QLabel("Database Analytics")
+        title.setStyleSheet("font-size: 28px; font-weight: 800; color: #1e293b; letter-spacing: -0.5px;")
         header_layout.addWidget(title)
-
+        
         header_layout.addStretch()
 
-        # Auto-refresh checkbox
-        self.chk_auto_refresh = QCheckBox("Auto-refresh")
-        self.chk_auto_refresh.setChecked(True)
-        self.chk_auto_refresh.toggled.connect(self.toggle_auto_refresh)
-        self.chk_auto_refresh.setStyleSheet("font-size: 13px; font-weight: bold;")
-        header_layout.addWidget(self.chk_auto_refresh)
+        # Simple status indicator
+        self.lbl_status = QLabel("Ready")
+        self.lbl_status.setStyleSheet("color: #64748b; font-size: 11px; font-weight: 700; text-transform: uppercase;")
+        header_layout.addWidget(self.lbl_status)
 
-        # Refresh button
-        btn_refresh = QPushButton("🔄 Refresh")
-        btn_refresh.setFixedHeight(36)
-        btn_refresh.setStyleSheet("""
-            QPushButton {
-                background-color: #3b82f6;
-                color: white;
-                border-radius: 6px;
-                padding: 0px 18px;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #2563eb;
-            }
-        """)
-        btn_refresh.clicked.connect(self.load_data)
-        header_layout.addWidget(btn_refresh)
-
-        # Generate Report button
-        btn_export = QPushButton("📊 Generate Report")
-        btn_export.setFixedHeight(36)
+        # Export button
+        btn_export = QPushButton("Export CSV")
+        btn_export.setFixedHeight(34)
+        btn_export.setCursor(Qt.PointingHandCursor)
         btn_export.setStyleSheet("""
             QPushButton {
-                background-color: #10b981;
-                color: white;
-                border-radius: 6px;
-                padding: 0px 18px;
-                font-weight: bold;
-                font-size: 13px;
+                background-color: #3b82f6; color: white; border: none; border-radius: 6px;
+                padding: 0px 15px; font-weight: 700; font-size: 12px;
             }
-            QPushButton:hover {
-                background-color: #059669;
-            }
+            QPushButton:hover { background-color: #2563eb; }
         """)
         btn_export.clicked.connect(self.generate_report)
         header_layout.addWidget(btn_export)
@@ -210,10 +226,10 @@ class DataViewPage(QWidget):
         stats_layout = QGridLayout()
         stats_layout.setSpacing(15)
 
-        self.card_total = StatCard("Total Records", "0", "📝", "#3b82f6")
-        self.card_crossings = StatCard("Total Crossings", "0", "🚶", "#10b981")
-        self.card_left = StatCard("Left ⬅", "0", "⬅", "#f59e0b")
-        self.card_right = StatCard("Right ➡", "0", "➡", "#8b5cf6")
+        self.card_total = StatCard("Captured Logs", "0", "⚡", "#3b82f6") # Energy/Activity icon
+        self.card_crossings = StatCard("Crossings", "0", "👣", "#10b981") # Walking footprints
+        self.card_left = StatCard("Moving Left", "0", "←", "#f59e0b") # Standard Arrow
+        self.card_right = StatCard("Moving Right", "0", "→", "#8b5cf6") # Standard Arrow
 
         stats_layout.addWidget(self.card_total, 0, 0)
         stats_layout.addWidget(self.card_crossings, 0, 1)
@@ -222,409 +238,205 @@ class DataViewPage(QWidget):
 
         main_layout.addLayout(stats_layout)
 
-        # === Filter Panel ===
-        filter_frame = QFrame()
-        filter_frame.setStyleSheet("""
-            QFrame {
-                background-color: white;
-                border-radius: 10px;
+        # === Search Console (New Combined Card) ===
+        self.search_card = QFrame()
+        self.search_card.setStyleSheet("""
+            QFrame#SearchCard {
+                background: white;
                 border: 1px solid #e2e8f0;
+                border-radius: 12px;
             }
         """)
-        filter_layout = QVBoxLayout(filter_frame)
-        filter_layout.setContentsMargins(20, 15, 20, 15)
-        filter_layout.setSpacing(12)
+        self.search_card.setObjectName("SearchCard")
+        
+        # Main layout for the card
+        search_card_layout = QVBoxLayout(self.search_card)
+        search_card_layout.setContentsMargins(10, 10, 10, 10)
+        search_card_layout.setSpacing(0)
 
-        # Filter header
-        filter_header = QHBoxLayout()
-        filter_title = QLabel("🔍 Filters")
-        filter_title.setStyleSheet("font-weight: bold; font-size: 15px; color: #1e293b;")
-        filter_header.addWidget(filter_title)
-        filter_header.addStretch()
-        filter_layout.addLayout(filter_header)
+        # 1. Top Bar (Basic Filters + Action Buttons)
+        top_bar = QWidget()
+        top_bar_layout = QHBoxLayout(top_bar)
+        top_bar_layout.setContentsMargins(10, 5, 10, 5)
+        top_bar_layout.setSpacing(20)
 
-        # Filters grid - 3 columns
-        filters_grid = QGridLayout()
-        filters_grid.setSpacing(12)
-        filters_grid.setColumnStretch(1, 1)
-        filters_grid.setColumnStretch(3, 1)
-        filters_grid.setColumnStretch(5, 1)
+        # Source Selection
+        source_group = QVBoxLayout()
+        source_label = QLabel("CAMERA SOURCE")
+        source_label.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.5px;")
+        self.combo_video_id = QComboBox()
+        self.combo_video_id.setFixedWidth(220)
+        source_group.addWidget(source_label)
+        source_group.addWidget(self.combo_video_id)
+        top_bar_layout.addLayout(source_group)
+
+        # Time Period
+        period_group = QVBoxLayout()
+        period_label = QLabel("TIME WINDOW")
+        period_label.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.5px;")
+        self.combo_period = QComboBox()
+        self.combo_period.addItems(["Today", "Yesterday", "This Week", "This Month", "Last 7 Days", "Custom Range"])
+        self.combo_period.setFixedWidth(140)
+        period_group.addWidget(period_label)
+        period_group.addWidget(self.combo_period)
+        top_bar_layout.addLayout(period_group)
+
+        # Custom Range (Hidden)
+        self.custom_range_widget = QWidget()
+        custom_range_layout = QHBoxLayout(self.custom_range_widget)
+        custom_range_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.datetime_start = QDateTimeEdit(QDateTime.currentDateTime().addDays(-1))
+        self.datetime_end = QDateTimeEdit(QDateTime.currentDateTime())
+        for dt in [self.datetime_start, self.datetime_end]:
+            dt.setCalendarPopup(True)
+            dt.setDisplayFormat("MM-dd HH:mm")
+            dt.setFixedWidth(110)
+        
+        range_group = QVBoxLayout()
+        range_label = QLabel("CUSTOM RANGE")
+        range_label.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 0.5px;")
+        range_inputs = QHBoxLayout()
+        range_inputs.addWidget(self.datetime_start)
+        range_inputs.addWidget(QLabel("-"))
+        range_inputs.addWidget(self.datetime_end)
+        range_group.addWidget(range_label)
+        range_group.addLayout(range_inputs)
+        custom_range_layout.addLayout(range_group)
+        self.custom_range_widget.setVisible(False)
+        top_bar_layout.addWidget(self.custom_range_widget)
+
+        top_bar_layout.addStretch()
+
+        # Action: Advanced Toggle
+        self.btn_toggle_advanced = QPushButton("ADVANCED")
+        self.btn_toggle_advanced.setFixedWidth(100)
+        self.btn_toggle_advanced.setFixedHeight(38)
+        self.btn_toggle_advanced.setCheckable(True)
+        self.btn_toggle_advanced.setCursor(Qt.PointingHandCursor)
+        self.btn_toggle_advanced.setStyleSheet("""
+            QPushButton {
+                background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; 
+                border-radius: 6px; font-weight: 800; font-size: 10px;
+            }
+            QPushButton:hover { background: #f1f5f9; color: #1e293b; }
+            QPushButton:checked { background: #eff6ff; color: #3b82f6; border-color: #3b82f6; }
+        """)
+        top_bar_layout.addWidget(self.btn_toggle_advanced)
+
+        # Action: Refresh Button (Replaced RUN FILTER)
+        self.btn_refresh = QPushButton("🔄 REFRESH DATA")
+        self.btn_refresh.setFixedWidth(160)
+        self.btn_refresh.setFixedHeight(38)
+        self.btn_refresh.setCursor(Qt.PointingHandCursor)
+        self.btn_refresh.setStyleSheet("""
+            QPushButton {
+                background: #3b82f6; color: white; border: none; border-radius: 6px;
+                font-weight: 800; font-size: 11px; letter-spacing: 0.5px;
+            }
+            QPushButton:hover { background: #2563eb; }
+            QPushButton:pressed { background: #1d4ed8; }
+        """)
+        top_bar_layout.addWidget(self.btn_refresh)
+
+        search_card_layout.addWidget(top_bar)
+
+        # 2. Advanced Panel (Collapsible Grid)
+        self.advanced_panel = QFrame()
+        self.advanced_panel.setVisible(False)
+        self.advanced_panel.setStyleSheet("border-top: 1px solid #f1f5f9; background: #fafafa;")
+        advanced_layout = QGridLayout(self.advanced_panel)
+        advanced_layout.setContentsMargins(20, 20, 20, 20)
+        advanced_layout.setSpacing(15)
 
         input_style = """
             QDateEdit, QDateTimeEdit, QLineEdit, QComboBox {
-                padding: 8px 10px;
-                border: 1.5px solid #cbd5e1;
-                border-radius: 6px;
-                background: white;
+                padding: 8px 12px;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                background: #fdfdfd;
                 font-size: 13px;
-                min-height: 20px;
+                color: #1e293b;
+                min-height: 28px;
             }
             QDateEdit:focus, QDateTimeEdit:focus, QLineEdit:focus, QComboBox:focus {
                 border-color: #3b82f6;
+                background: white;
             }
-            QComboBox::drop-down {
-                border: none;
-                width: 25px;
-            }
+            QComboBox::drop-down { border: none; width: 30px; }
             QComboBox::down-arrow {
                 image: none;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
                 border-top: 5px solid #64748b;
-                margin-right: 5px;
+                margin-right: 10px;
             }
         """
 
-        label_style = "font-weight: bold; color: #475569; font-size: 13px;"
+        label_style = "font-weight: 800; color: #475569; font-size: 10px; text-transform: uppercase; letter-spacing: 1px;"
 
-        # Row 1
-        lbl_from = QLabel("From:")
-        lbl_from.setStyleSheet(label_style)
-        filters_grid.addWidget(lbl_from, 0, 0)
-
-        self.datetime_start = QDateTimeEdit()
-        self.datetime_start.setCalendarPopup(True)
-        self.datetime_start.setDisplayFormat("yyyy-MM-dd HH:mm")
-        # Default to today at 00:00
-        today_start = QDateTime.currentDateTime()
-        today_start.setTime(today_start.time().addSecs(-today_start.time().hour() * 3600 - today_start.time().minute() * 60 - today_start.time().second()))
-        self.datetime_start.setDateTime(today_start)
-        self.datetime_start.setStyleSheet(input_style)
-        # Enable mouse wheel to change values
-        self.datetime_start.setWrapping(True)
-        # Make calendar widget more user-friendly with always-visible navigation
-        calendar_start = self.datetime_start.calendarWidget()
-        if calendar_start:
-            calendar_start.setNavigationBarVisible(True)
-            calendar_start.setHorizontalHeaderFormat(calendar_start.HorizontalHeaderFormat.ShortDayNames)
-            calendar_start.setVerticalHeaderFormat(calendar_start.VerticalHeaderFormat.NoVerticalHeader)
-            # Style the calendar to make navigation bar prominent and always visible
-            calendar_start.setStyleSheet("""
-                QCalendarWidget QWidget#qt_calendar_navigationbar {
-                    background-color: #3b82f6;
-                    min-height: 40px;
-                }
-                QCalendarWidget QToolButton {
-                    color: white;
-                    background-color: #3b82f6;
-                    font-size: 14px;
-                    font-weight: bold;
-                    min-width: 60px;
-                    min-height: 30px;
-                    border-radius: 4px;
-                    padding: 4px;
-                }
-                QCalendarWidget QToolButton:hover {
-                    background-color: #2563eb;
-                }
-                QCalendarWidget QToolButton:pressed {
-                    background-color: #1d4ed8;
-                }
-                QCalendarWidget QMenu {
-                    background-color: white;
-                    border: 1px solid #e5e7eb;
-                }
-                QCalendarWidget QSpinBox {
-                    background-color: white;
-                    color: #1f2937;
-                    font-size: 14px;
-                    font-weight: bold;
-                    min-height: 30px;
-                    border-radius: 4px;
-                    padding: 4px;
-                }
-            """)
-        filters_grid.addWidget(self.datetime_start, 0, 1)
-
-        lbl_to = QLabel("To:")
-        lbl_to.setStyleSheet(label_style)
-        filters_grid.addWidget(lbl_to, 0, 2)
-
-        self.datetime_end = QDateTimeEdit()
-        self.datetime_end.setCalendarPopup(True)
-        self.datetime_end.setDisplayFormat("yyyy-MM-dd HH:mm")
-        # Default to current time
-        self.datetime_end.setDateTime(QDateTime.currentDateTime())
-        self.datetime_end.setStyleSheet(input_style)
-        # Enable mouse wheel to change values
-        self.datetime_end.setWrapping(True)
-        # Make calendar widget more user-friendly with always-visible navigation
-        calendar_end = self.datetime_end.calendarWidget()
-        if calendar_end:
-            calendar_end.setNavigationBarVisible(True)
-            calendar_end.setHorizontalHeaderFormat(calendar_end.HorizontalHeaderFormat.ShortDayNames)
-            calendar_end.setVerticalHeaderFormat(calendar_end.VerticalHeaderFormat.NoVerticalHeader)
-            # Style the calendar to make navigation bar prominent and always visible
-            calendar_end.setStyleSheet("""
-                QCalendarWidget QWidget#qt_calendar_navigationbar {
-                    background-color: #3b82f6;
-                    min-height: 40px;
-                }
-                QCalendarWidget QToolButton {
-                    color: white;
-                    background-color: #3b82f6;
-                    font-size: 14px;
-                    font-weight: bold;
-                    min-width: 60px;
-                    min-height: 30px;
-                    border-radius: 4px;
-                    padding: 4px;
-                }
-                QCalendarWidget QToolButton:hover {
-                    background-color: #2563eb;
-                }
-                QCalendarWidget QToolButton:pressed {
-                    background-color: #1d4ed8;
-                }
-                QCalendarWidget QMenu {
-                    background-color: white;
-                    border: 1px solid #e5e7eb;
-                }
-                QCalendarWidget QSpinBox {
-                    background-color: white;
-                    color: #1f2937;
-                    font-size: 14px;
-                    font-weight: bold;
-                    min-height: 30px;
-                    border-radius: 4px;
-                    padding: 4px;
-                }
-            """)
-        filters_grid.addWidget(self.datetime_end, 0, 3)
-
-        lbl_video_id = QLabel("Video ID:")
-        lbl_video_id.setStyleSheet(label_style)
-        filters_grid.addWidget(lbl_video_id, 0, 4)
-
-        # Video ID dropdown with name display
-        video_id_container = QWidget()
-        video_id_layout = QHBoxLayout(video_id_container)
-        video_id_layout.setContentsMargins(0, 0, 0, 0)
-        video_id_layout.setSpacing(8)
-
-        self.combo_video_id = QComboBox()
-        self.combo_video_id.setStyleSheet(input_style)
-
-        # Load video sources from config
-        cm = ConfigManager()
-        video_sources = cm.get("video_sources", [])
-
-        self.combo_video_id.addItem("All", "")
-        for src in video_sources:
-            video_id = src.get("id", "")
-            video_name = src.get("name", "Unknown")
-            if video_id:
-                # Display "id - name" in dropdown
-                display_text = f"{video_id} - {video_name}"
-                self.combo_video_id.addItem(display_text, video_id)
-
-        video_id_layout.addWidget(self.combo_video_id, 1)
-
-        filters_grid.addWidget(video_id_container, 0, 5)
-
-        # Row 2
-        lbl_gender = QLabel("Gender:")
-        lbl_gender.setStyleSheet(label_style)
-        filters_grid.addWidget(lbl_gender, 1, 0)
-
+        # Row 1 of advanced
+        g_label = QLabel("GENDER")
+        g_label.setStyleSheet(label_style)
+        advanced_layout.addWidget(g_label, 0, 0)
         self.combo_gender = QComboBox()
         self.combo_gender.addItems(["All", "Male", "Female"])
         self.combo_gender.setStyleSheet(input_style)
-        filters_grid.addWidget(self.combo_gender, 1, 1)
+        advanced_layout.addWidget(self.combo_gender, 0, 1)
 
-        lbl_color = QLabel("Color:")
-        lbl_color.setStyleSheet(label_style)
-        filters_grid.addWidget(lbl_color, 1, 2)
-
+        c_label = QLabel("COLOR")
+        c_label.setStyleSheet(label_style)
+        advanced_layout.addWidget(c_label, 0, 2)
         self.combo_color = QComboBox()
-        colors = ["All", "Black", "White", "Red", "Blue", "Green", "Yellow",
-                  "Orange", "Purple", "Pink", "Brown", "Gray"]
-        self.combo_color.addItems(colors)
+        self.combo_color.addItems(["All", "Black", "White", "Red", "Blue", "Green", "Yellow", "Orange", "Purple", "Pink", "Brown", "Gray"])
         self.combo_color.setStyleSheet(input_style)
-        filters_grid.addWidget(self.combo_color, 1, 3)
+        advanced_layout.addWidget(self.combo_color, 0, 3)
 
-        lbl_mask = QLabel("Mask:")
-        lbl_mask.setStyleSheet(label_style)
-        filters_grid.addWidget(lbl_mask, 1, 4)
-
+        m_label = QLabel("MASK")
+        m_label.setStyleSheet(label_style)
+        advanced_layout.addWidget(m_label, 0, 4)
         self.combo_mask = QComboBox()
         self.combo_mask.addItems(["All", "With Mask", "No Mask", "Mask Incorrect"])
         self.combo_mask.setStyleSheet(input_style)
-        filters_grid.addWidget(self.combo_mask, 1, 5)
+        advanced_layout.addWidget(self.combo_mask, 0, 5)
 
-        # Row 3
-        lbl_handbag = QLabel("Handbag:")
-        lbl_handbag.setStyleSheet(label_style)
-        filters_grid.addWidget(lbl_handbag, 2, 0)
-
+        # Row 2 of advanced
+        h_label = QLabel("HANDBAG")
+        h_label.setStyleSheet(label_style)
+        advanced_layout.addWidget(h_label, 1, 0)
         self.combo_handbag = QComboBox()
         self.combo_handbag.addItems(["All", "With Handbag", "No Handbag"])
         self.combo_handbag.setStyleSheet(input_style)
-        filters_grid.addWidget(self.combo_handbag, 2, 1)
+        advanced_layout.addWidget(self.combo_handbag, 1, 1)
 
-        lbl_limit = QLabel("Max Rows:")
-        lbl_limit.setStyleSheet(label_style)
-        filters_grid.addWidget(lbl_limit, 2, 2)
+        b_label = QLabel("BACKPACK")
+        b_label.setStyleSheet(label_style)
+        advanced_layout.addWidget(b_label, 1, 2)
+        self.combo_backpack = QComboBox()
+        self.combo_backpack.addItems(["All", "With Backpack", "No Backpack"])
+        self.combo_backpack.setStyleSheet(input_style)
+        advanced_layout.addWidget(self.combo_backpack, 1, 3)
 
+        l_label = QLabel("MATCH LIMIT")
+        l_label.setStyleSheet(label_style)
+        advanced_layout.addWidget(l_label, 1, 4)
         self.combo_limit = QComboBox()
         self.combo_limit.addItems(["100", "500", "1000", "5000", "All"])
         self.combo_limit.setCurrentText("1000")
         self.combo_limit.setStyleSheet(input_style)
-        filters_grid.addWidget(self.combo_limit, 2, 3)
+        advanced_layout.addWidget(self.combo_limit, 1, 5)
 
-        # Row 4 - Backpack filter
-        lbl_backpack = QLabel("Backpack:")
-        lbl_backpack.setStyleSheet(label_style)
-        filters_grid.addWidget(lbl_backpack, 3, 0)
+        search_card_layout.addWidget(self.advanced_panel)
+        main_layout.addWidget(self.search_card)
 
-        self.combo_backpack = QComboBox()
-        self.combo_backpack.addItems(["All", "With Backpack", "No Backpack"])
-        self.combo_backpack.setStyleSheet(input_style)
-        filters_grid.addWidget(self.combo_backpack, 3, 1)
-
-        filter_layout.addLayout(filters_grid)
-
-        # Quick date range buttons
-        quick_range_layout = QHBoxLayout()
-        quick_range_label = QLabel("Quick Select:")
-        quick_range_label.setStyleSheet("color: #64748b; font-size: 12px;")
-        quick_range_layout.addWidget(quick_range_label)
-
-        quick_btn_style = """
-            QPushButton {
-                background-color: #f1f5f9;
-                color: #475569;
-                border: 1px solid #cbd5e1;
-                border-radius: 5px;
-                padding: 5px 12px;
-                font-size: 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #e2e8f0;
-                border-color: #3b82f6;
-            }
-        """
-
-        btn_latest = QPushButton("Latest")
-        btn_latest.setStyleSheet(quick_btn_style)
-        btn_latest.clicked.connect(self.set_latest)
-        quick_range_layout.addWidget(btn_latest)
-
-        btn_today = QPushButton("Today")
-        btn_today.setStyleSheet(quick_btn_style)
-        btn_today.clicked.connect(self.set_today)
-        quick_range_layout.addWidget(btn_today)
-
-        btn_yesterday = QPushButton("Yesterday")
-        btn_yesterday.setStyleSheet(quick_btn_style)
-        btn_yesterday.clicked.connect(self.set_yesterday)
-        quick_range_layout.addWidget(btn_yesterday)
-
-        btn_this_week = QPushButton("This Week")
-        btn_this_week.setStyleSheet(quick_btn_style)
-        btn_this_week.clicked.connect(self.set_this_week)
-        quick_range_layout.addWidget(btn_this_week)
-
-        btn_last_7days = QPushButton("Last 7 Days")
-        btn_last_7days.setStyleSheet(quick_btn_style)
-        btn_last_7days.clicked.connect(self.set_last_7days)
-        quick_range_layout.addWidget(btn_last_7days)
-
-        btn_this_month = QPushButton("This Month")
-        btn_this_month.setStyleSheet(quick_btn_style)
-        btn_this_month.clicked.connect(self.set_this_month)
-        quick_range_layout.addWidget(btn_this_month)
-
-        quick_range_layout.addStretch()
-        filter_layout.addLayout(quick_range_layout)
-
-        # Filter buttons
-        btn_layout = QHBoxLayout()
-        btn_layout.addStretch()
-
-        btn_clear = QPushButton("Clear")
-        btn_clear.setFixedHeight(34)
-        btn_clear.setStyleSheet("""
-            QPushButton {
-                background-color: #6b7280;
-                color: white;
-                border-radius: 6px;
-                padding: 0px 20px;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #4b5563;
-            }
-        """)
-        btn_clear.clicked.connect(self.clear_filters)
-        btn_layout.addWidget(btn_clear)
-
-        btn_apply = QPushButton("Apply Filters")
-        btn_apply.setFixedHeight(34)
-        btn_apply.setStyleSheet("""
-            QPushButton {
-                background-color: #f59e0b;
-                color: white;
-                border-radius: 6px;
-                padding: 0px 20px;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #d97706;
-            }
-        """)
-        btn_apply.clicked.connect(self.load_data)
-        btn_layout.addWidget(btn_apply)
-
-        # Delete Selected button
-        btn_delete_selected = QPushButton("Delete Selected")
-        btn_delete_selected.setFixedHeight(34)
-        btn_delete_selected.setStyleSheet("""
-            QPushButton {
-                background-color: #ef4444;
-                color: white;
-                border-radius: 6px;
-                padding: 0px 20px;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #dc2626;
-            }
-        """)
-        btn_delete_selected.clicked.connect(self.delete_selected_records)
-        btn_layout.addWidget(btn_delete_selected)
-
-        # Delete All Filtered button
-        btn_delete_filtered = QPushButton("Delete All Filtered")
-        btn_delete_filtered.setFixedHeight(34)
-        btn_delete_filtered.setStyleSheet("""
-            QPushButton {
-                background-color: #991b1b;
-                color: white;
-                border-radius: 6px;
-                padding: 0px 20px;
-                font-weight: bold;
-                font-size: 13px;
-            }
-            QPushButton:hover {
-                background-color: #7f1d1d;
-            }
-        """)
-        btn_delete_filtered.clicked.connect(self.delete_filtered_records)
-        btn_layout.addWidget(btn_delete_filtered)
-
-        filter_layout.addLayout(btn_layout)
-
-        main_layout.addWidget(filter_frame)
-
-        # === Status Bar ===
-        self.lbl_status = QLabel("Click 'Apply Filters' to load data")
-        self.lbl_status.setStyleSheet("color: #64748b; font-size: 13px; padding: 5px;")
-        main_layout.addWidget(self.lbl_status)
+        # --- SIGNALS ---
+        self.btn_refresh.clicked.connect(self.refresh_current_view)
+        self.btn_toggle_advanced.toggled.connect(self.advanced_panel.setVisible)
+        self.combo_period.currentIndexChanged.connect(self.on_period_changed)
+        
+        # Also auto-update on choice if preferred, or just rely on the button
+        # self.combo_period.currentIndexChanged.connect(self.load_data)
+        # self.combo_video_id.currentIndexChanged.connect(self.load_data)
 
         # === Data Table ===
         self.table = QTableWidget()
@@ -651,63 +463,166 @@ class DataViewPage(QWidget):
         self.table.setStyleSheet("""
             QTableWidget {
                 border: 1px solid #e2e8f0;
-                border-radius: 10px;
+                border-radius: 8px;
                 background-color: white;
-                gridline-color: transparent;
+                gridline-color: #f1f5f9;
+                font-size: 12px;
+                color: #334155;
             }
             QHeaderView::section {
                 background-color: #f8fafc;
-                padding: 10px 8px;
+                padding: 12px 10px;
                 border: none;
-                border-bottom: 2px solid #cbd5e1;
-                font-weight: bold;
-                color: #1e293b;
-                font-size: 13px;
+                border-bottom: 2px solid #e2e8f0;
+                font-weight: 800;
+                color: #475569;
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
             }
             QTableWidget::item {
-                padding: 10px 8px;
+                padding: 12px 10px;
                 border-bottom: 1px solid #f1f5f9;
             }
             QTableWidget::item:selected {
-                background-color: #dbeafe;
-                color: #1e293b;
-            }
-            QTableWidget::item:alternate {
-                background-color: #f9fafb;
+                background-color: #eff6ff;
+                color: #2563eb;
+                font-weight: 600;
             }
         """)
 
         self.table.setMinimumHeight(350)
-
         main_layout.addWidget(self.table)
 
-    def toggle_auto_refresh(self, enabled):
-        """Toggle auto-refresh timer"""
-        if enabled:
-            self.refresh_timer.start(30000)
+        # Management Tools (Bottom Bar)
+        manage_layout = QHBoxLayout()
+        
+        self.lbl_table_info = QLabel("Total logs matches current filters")
+        self.lbl_table_info.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        manage_layout.addWidget(self.lbl_table_info)
+        
+        manage_layout.addStretch()
+
+        from PySide6.QtWidgets import QMenu
+        self.btn_manage = QPushButton("DATABASE CONTROLS")
+        self.btn_manage.setFixedWidth(180)
+        self.btn_manage.setFixedHeight(36)
+        self.btn_manage.setCursor(Qt.PointingHandCursor)
+        self.btn_manage.setStyleSheet("""
+            QPushButton {
+                background: #f8fafc; color: #475569; border: 1px solid #e2e8f0; 
+                border-radius: 8px; font-weight: 800; font-size: 10px; letter-spacing: 0.5px;
+            }
+            QPushButton:hover { background: white; color: #1e293b; border-color: #cbd5e1; }
+            QPushButton::menu-indicator { 
+                image: none; 
+            }
+        """)
+        
+        manage_menu = QMenu(self)
+        manage_menu.setStyleSheet("""
+            QMenu {
+                background-color: white;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+                padding: 5px;
+            }
+            QMenu::item {
+                padding: 10px 25px;
+                border-radius: 5px;
+                color: #475569;
+                font-size: 12px;
+                font-weight: 600;
+            }
+            QMenu::item:selected {
+                background-color: #f1f5f9;
+                color: #1e293b;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #f1f5f9;
+                margin: 5px 10px;
+            }
+        """)
+        
+        act_clear = manage_menu.addAction("Clear Selection")
+        act_clear.triggered.connect(self.table.clearSelection)
+        
+        manage_menu.addSeparator()
+        
+        act_del_sel = manage_menu.addAction("Delete Selected Rows")
+        act_del_sel.triggered.connect(self.delete_selected_records)
+        
+        act_wipe = manage_menu.addAction("Wipe All Matching Data")
+        act_wipe.triggered.connect(self.delete_filtered_records)
+        
+        self.btn_manage.setMenu(manage_menu)
+        manage_layout.addWidget(self.btn_manage)
+
+        main_layout.addLayout(manage_layout)
+        
+        # Build Video ID list
+        self.populate_video_ids()
+
+    def populate_video_ids(self):
+        """Populate the video ID dropdown from both config and historical data in DB"""
+        # CRITICAL: Always reload config to get latest sources added in other tabs
+        cm = ConfigManager()
+        cm.load_config() 
+        
+        self.combo_video_id.clear()
+        self.combo_video_id.addItem("ALL SOURCES", "")
+        
+        # 1. Get current names from config for better display
+        config_map = {}
+        cm = ConfigManager()
+        sources = cm.get("video_sources", [])
+        for src in sources:
+            vid = src.get("id")
+            name = src.get("name", "Unknown Source")
+            if vid:
+                config_map[vid] = name
+        
+        # 2. Get all unique IDs that actually exist in the DB
+        all_vids = self.db.get_unique_video_ids()
+        
+        # Merge - prioritize config order but include historical ones
+        displayed_vids = set()
+        
+        # Add current ones from config
+        for vid, name in config_map.items():
+            self.combo_video_id.addItem(f"{vid} - {name}", vid)
+            displayed_vids.add(vid)
+            
+        # Add historical ones not in config
+        for vid in all_vids:
+            if vid not in displayed_vids:
+                self.combo_video_id.addItem(f"{vid} (Historical Data)", vid)
+                displayed_vids.add(vid)
+
+    def on_period_changed(self, index):
+        """Handle period dropdown change"""
+        period = self.combo_period.currentText()
+        self.custom_range_widget.setVisible(period == "Custom Range")
+        
+        if period == "Today": self.set_today()
+        elif period == "Yesterday": self.set_yesterday()
+        elif period == "This Week": self.set_this_week()
+        elif period == "This Month": self.set_this_month()
+        elif period == "Last 7 Days": self.set_last_7days()
+        # Custom Range does nothing, wait for user input
+
+    def refresh_current_view(self):
+        """Smart refresh: Updates 'now' for dynamic windows then loads."""
+        period = self.combo_period.currentText()
+        if period == "Today": self.set_today()
+        elif period == "Yesterday": self.set_yesterday()
+        elif period == "This Week": self.set_this_week()
+        elif period == "This Month": self.set_this_month()
+        elif period == "Last 7 Days": self.set_last_7days()
         else:
-            self.refresh_timer.stop()
-
-    def clear_filters(self):
-        """Reset all filters to default"""
-        self.set_today()
-        self.combo_video_id.setCurrentIndex(0)  # Set to "All"
-        self.combo_gender.setCurrentText("All")
-        self.combo_color.setCurrentText("All")
-        self.combo_mask.setCurrentText("All")
-        self.combo_limit.setCurrentText("1000")
-        self.load_data()
-
-    def set_latest(self):
-        """Set date range to today 00:00 - current time (latest)"""
-        from PySide6.QtCore import QTime
-        now = QDateTime.currentDateTime()
-        today_start = QDateTime(now.date(), QTime(0, 0, 0))  # Today at 00:00:00
-        self.datetime_start.setDateTime(today_start)
-        self.datetime_end.setDateTime(now)  # Current time
-        self.datetime_start.update()  # Force UI refresh
-        self.datetime_end.update()  # Force UI refresh
-        self.load_data()  # Auto-load data
+            # Custom Range - just load with existing values
+            self.load_data()
 
     def set_today(self):
         """Set date range to today"""
@@ -716,9 +631,7 @@ class DataViewPage(QWidget):
         today_start = QDateTime(now.date(), QTime(0, 0, 0))
         self.datetime_start.setDateTime(today_start)
         self.datetime_end.setDateTime(now)
-        self.datetime_start.update()  # Force UI refresh
-        self.datetime_end.update()  # Force UI refresh
-        self.load_data()  # Auto-load data
+        self.load_data()
 
     def set_yesterday(self):
         """Set date range to yesterday"""
@@ -728,9 +641,7 @@ class DataViewPage(QWidget):
         yesterday_end = QDateTime(yesterday_date, QTime(23, 59, 59))
         self.datetime_start.setDateTime(yesterday_start)
         self.datetime_end.setDateTime(yesterday_end)
-        self.datetime_start.update()  # Force UI refresh
-        self.datetime_end.update()  # Force UI refresh
-        self.load_data()  # Auto-load data
+        self.load_data()
 
     def set_this_week(self):
         """Set date range to this week (Monday to now)"""
@@ -741,9 +652,7 @@ class DataViewPage(QWidget):
         week_start = QDateTime(week_start_date, QTime(0, 0, 0))
         self.datetime_start.setDateTime(week_start)
         self.datetime_end.setDateTime(now)
-        self.datetime_start.update()  # Force UI refresh
-        self.datetime_end.update()  # Force UI refresh
-        self.load_data()  # Auto-load data
+        self.load_data()
 
     def set_last_7days(self):
         """Set date range to last 7 days"""
@@ -753,9 +662,7 @@ class DataViewPage(QWidget):
         seven_days_ago = QDateTime(seven_days_ago_date, QTime(0, 0, 0))
         self.datetime_start.setDateTime(seven_days_ago)
         self.datetime_end.setDateTime(now)
-        self.datetime_start.update()  # Force UI refresh
-        self.datetime_end.update()  # Force UI refresh
-        self.load_data()  # Auto-load data
+        self.load_data()
 
     def set_this_month(self):
         """Set date range to this month"""
@@ -765,9 +672,7 @@ class DataViewPage(QWidget):
         month_start = QDateTime(month_start_date, QTime(0, 0, 0))
         self.datetime_start.setDateTime(month_start)
         self.datetime_end.setDateTime(now)
-        self.datetime_start.update()  # Force UI refresh
-        self.datetime_end.update()  # Force UI refresh
-        self.load_data()  # Auto-load data
+        self.load_data()
 
     def load_data(self):
         """Load data from database with filters"""

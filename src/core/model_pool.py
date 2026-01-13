@@ -35,18 +35,21 @@ class ModelPool:
         self._fall_model = None
         self._mask_model = None
         self._pose_model = None
+        self._face_model = None
 
         # Reference counters to track usage
         self._main_refs = 0
         self._fall_refs = 0
         self._mask_refs = 0
         self._pose_refs = 0
+        self._face_refs = 0
 
         # Locks for thread-safe model loading
         self._main_lock = threading.Lock()
         self._fall_lock = threading.Lock()
         self._mask_lock = threading.Lock()
         self._pose_lock = threading.Lock()
+        self._face_lock = threading.Lock()
 
         self._initialized = True
         print("[MODEL POOL] 🎯 Initialized shared model pool (Singleton)")
@@ -196,6 +199,37 @@ class ModelPool:
                 self._pose_refs -= 1
                 print(f"[MODEL POOL] 🔓 Pose model reference count: {self._pose_refs}")
 
+    def get_face_model(self, model_path="models/face/yolov8n-face.pt"):
+        """
+        Get shared YOLO face detection model.
+        """
+        with self._face_lock:
+            if self._face_model is None:
+                print(f"[MODEL POOL] 📥 Loading face detection model: {model_path}")
+                try:
+                    self._face_model = YOLO(model_path)
+                    print("[MODEL POOL] ✅ Face model loaded")
+
+                    # Warmup
+                    print("[MODEL POOL] 🔥 Warming up face model...")
+                    dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
+                    self._face_model.predict(dummy_frame, verbose=False, imgsz=640, half=torch.cuda.is_available())
+                    print("[MODEL POOL] ✅ Face model warmup complete")
+                except Exception as e:
+                    print(f"[MODEL POOL] ❌ Failed to load face model: {e}")
+                    return None
+
+            self._face_refs += 1
+            print(f"[MODEL POOL] 🔗 Face model reference count: {self._face_refs}")
+            return self._face_model
+
+    def release_face_model(self):
+        """Release reference to face model."""
+        with self._face_lock:
+            if self._face_refs > 0:
+                self._face_refs -= 1
+                print(f"[MODEL POOL] 🔓 Face model reference count: {self._face_refs}")
+
     def get_stats(self):
         """Get current model pool statistics."""
         return {
@@ -206,7 +240,9 @@ class ModelPool:
             "mask_model_loaded": self._mask_model is not None,
             "mask_refs": self._mask_refs,
             "pose_model_loaded": self._pose_model is not None,
-            "pose_refs": self._pose_refs
+            "pose_refs": self._pose_refs,
+            "face_model_loaded": self._face_model is not None,
+            "face_refs": self._face_refs
         }
 
     def cleanup_unused(self):
@@ -235,6 +271,11 @@ class ModelPool:
             if self._pose_refs == 0 and self._pose_model is not None:
                 self._pose_model = None
                 cleaned.append("pose")
+
+        with self._face_lock:
+            if self._face_refs == 0 and self._face_model is not None:
+                self._face_model = None
+                cleaned.append("face")
 
         if cleaned:
             print(f"[MODEL POOL] 🧹 Cleaned up unused models: {', '.join(cleaned)}")

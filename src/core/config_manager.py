@@ -1,5 +1,6 @@
 import json
 import os
+import copy
 
 CONFIG_FILE = "config.json"
 
@@ -25,7 +26,7 @@ class ConfigManager:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(ConfigManager, cls).__new__(cls)
-            cls._instance.config = DEFAULT_CONFIG.copy()
+            cls._instance.config = copy.deepcopy(DEFAULT_CONFIG)
             cls._instance.load_config()
         return cls._instance
 
@@ -34,10 +35,12 @@ class ConfigManager:
             try:
                 with open(CONFIG_FILE, 'r') as f:
                     data = json.load(f)
-                    # Merge with default to ensure all keys exist
+                    # Reset and Merge with default to ensure all keys exist
+                    self.config = copy.deepcopy(DEFAULT_CONFIG)
                     self.config.update(data)
             except Exception as e:
                 print(f"Error loading config: {e}")
+        return self.config
 
     def save_config(self):
         try:
@@ -52,3 +55,7 @@ class ConfigManager:
     def set(self, key, value):
         self.config[key] = value
         self.save_config()
+
+    def get_active_count(self):
+        """Returns number of active video sources for dynamic optimization"""
+        return len(self.config.get("video_sources", []))
