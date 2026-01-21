@@ -591,16 +591,22 @@ class VideoDetector:
         # 1-2 sources: Full speed (skip_freq=1)
         # 3-4 sources: Skip every other frame (skip_freq=2)
         # 5+ sources: Heavy optimization (skip_freq=3+)
-        if source_count <= 2:
-            self.inference_freq = 1
-        elif source_count <= 4:
-            self.inference_freq = 2
-        else:
-            self.inference_freq = 3
-
         self._perf_stats["load"] = source_count # Record active streams
-
         skip_freq = self.inference_freq
+
+        # CRITICAL FIX: Single-stream "High Sensitivity" mode
+        if source_count <= 1:
+            imgsz = 640  # Stay at 640 to avoid 'AssertionError' with fixed-size models
+            conf_threshold = 0.10 # Lower threshold to catch small/distant people
+        else:
+            imgsz = 640
+            conf_threshold = 0.15
+        
+        # MONITOR: Warn if FPS is critically low for tracking stability
+        if self._perf_stats["fps"] < 8 and self.frame_count % 100 == 0:
+            print(f"⚠️ CRITICAL PERFORMANCE WARNING: Running at {self._perf_stats['fps']:.1f} FPS.")
+            print(f"   Tracker stability is highly compromised below 10 FPS. People may 'vanish'.")
+            print(f"   SUGGESTION: Disable 'Face Analysis' or 'Mask Detection' to recover tracking quality.")
         
         # Check if we should skip detection but keep last known state for visuals
         if self.frame_count % skip_freq != 0 and self.last_detections:
@@ -612,15 +618,11 @@ class VideoDetector:
         current_time = time.time()
         t_detect_start = time.time()
         
-        # PERFORMANCE OPTIMIZATION: Balanced resolution for real-time RTSP streams
-        imgsz = 640  # Must match the exported engine size
-        # Lowering threshold significantly to 0.08 to capture all distant/small pedestrians
-        conf_threshold = 0.08  
+        # Balanced settings handled by source_count logic above
         
         t_inf_start = time.time()
         if tracking_enabled:
-            # Persist=True for tracking
-            # Using higher iou=0.7 to allow overlapping boxes in crowded scenes
+            # Using higher imgsz for single stream accuracy
             results = self.model.track(frame, persist=True, verbose=False, classes=[0], tracker=self.tracker, imgsz=imgsz, conf=conf_threshold, iou=0.7, half=True)
         else:
             # Predict only (Detection) - No IDs
@@ -1328,8 +1330,8 @@ class VideoDetector:
             else:
                 self.face_analysis_freq = 4 # Minimum 4 frames to prevent GPU stuttering
             
-            # Frame 3: Face Analysis (Staggered on cycle == 3)
-            if cycle == 3:
+            # Frame 3: Face Analysis (Staggered on cycle == 3 AND obeys dynamic freq)
+            if cycle == 3 and (self.frame_count // 4) % (self.face_analysis_freq // 4 + 1) == 0:
                 try:
                     # ROI EXTRACRTION: Find people who need face analysis
                     unconfirmed_with_areas = []
@@ -1403,31 +1405,23 @@ class VideoDetector:
                         self.face_cache[tid]['gender'] = stable_gender
                         self.face_cache[tid]['age'] = stable_age
 
-            # --- 4. DRAW FACE INFO (UI Brackets Removed) ---
-            # if self.last_face_info:
-            #     self.face_analyzer.draw_face_info(frame, self.last_face_info)
+        # --- MASK DETECTION: Persistent Results (Prevents Flickering) ---
+        if self.mask_detection_enabled:
+            for det in detections:
+                if det['cls_id'] == 0:
+                    tid = det.get('id')
+                    if tid is not None and tid in self.mask_cache:
+                        mask_str = self.mask_cache[tid]
+                        det['mask_status_str'] = mask_str
+                        mask_labels_reverse = {"With Mask": 0, "No Mask": 1, "Mask Incorrect": 2}
+                        det['mask_status'] = mask_labels_reverse.get(mask_str, None)
 
-        # --- MASK DETECTION (with 1-confirmation caching) ---
-        if self.mask_detection_enabled and self.mask_model is not None:
+        # --- MASK DETECTION ENGINE (Runs only on cycle 1) ---
+        # PERFORMANCE: Only run mask detection on Frame 1 to stagger load
+        if self.mask_detection_enabled and self.mask_model is not None and cycle == 1:
             # print(f"[DEBUG] Mask detection ENABLED and running on frame")
             try:
-                # Process each person detection
-                for det in detections:
-                    if det['cls_id'] == 0:  # Person
-                        tid = det.get('id')
-
-                        # Check if already confirmed
-                        if tid is not None and self.mask_confirmed.get(tid, False):
-                            # Use cached mask status
-                            mask_str = self.mask_cache.get(tid, "Unknown")
-                            det['mask_status_str'] = mask_str
-
-                            # Also set numeric mask_status for visualization
-                            mask_labels_reverse = {"With Mask": 0, "No Mask": 1, "Mask Incorrect": 2}
-                            det['mask_status'] = mask_labels_reverse.get(mask_str, None)
-                            det['mask_confidence'] = 1.0  # Confirmed
-                            det['mask_box'] = None  # Don't need box after confirmation
-                            continue  # Skip detection for this person
+                # Skip the redundant loop here as we handle persistence above
 
                 # Run mask detection ONLY for unconfirmed people
                 people_to_detect = [det for det in detections if det['cls_id'] == 0 and not self.mask_confirmed.get(det.get('id'), False)]
@@ -1523,6 +1517,13 @@ class VideoDetector:
         # Add performance stats to output
         self._perf_stats["latency"] = (time.time() - t_detect_start) * 1000
         self._perf_stats["fps"] = 1000.0 / self._perf_stats["latency"] if self._perf_stats["latency"] > 0 else 0
+        
+        # MONITOR: Warn if FPS is critically low for tracking stability
+        if self._perf_stats["fps"] < 8 and self.frame_count % 100 == 0:
+            print(f"⚠️ CRITICAL PERFORMANCE WARNING: Running at {self._perf_stats['fps']:.1f} FPS.")
+            print(f"   Tracker stability is highly compromised below 10 FPS. People may 'vanish'.")
+            print(f"   SUGGESTION: Disable 'Face Analysis' or 'Mask Detection' to recover tracking quality.")
+
         enhanced_counts["_perf"] = self._perf_stats
         
         self.last_enhanced_counts = enhanced_counts
