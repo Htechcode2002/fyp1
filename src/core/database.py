@@ -54,6 +54,8 @@ class DatabaseManager:
         batch_size = 10  # Insert up to 10 events at once
         last_insert_time = time.time()
         
+        last_sync_attempt = 0
+        
         while self.running:
             try:
                 # Block for 0.5s to allow batching
@@ -67,12 +69,25 @@ class DatabaseManager:
                 print(f"[DB] Worker Error: {e}")
                 continue
             
-            # Insert batch if full or timeout (2 seconds)
             current_time = time.time()
+
+            # Insert batch if full or timeout (2 seconds)
             if len(batch) >= batch_size or (len(batch) > 0 and current_time - last_insert_time > 2.0):
                 self._insert_batch(batch)
                 batch = []
                 last_insert_time = current_time
+
+            # Periodic Sync Check (Heartbeat) - check every 5 seconds
+            # This ensures that if WiFi comes back, we sync even without new data
+            if current_time - last_sync_attempt > 5.0:
+                is_cooling = hasattr(self, '_cooling_until') and current_time < self._cooling_until
+                
+                # Check quickly if file exists before trying anything heavy
+                import os
+                if not is_cooling and os.path.exists("offline_events_buffer.json"):
+                    self._sync_local_cache()
+                
+                last_sync_attempt = current_time
         
         # Flush remaining on shutdown
         if batch:
@@ -111,7 +126,8 @@ class DatabaseManager:
             print(f"[DB] ⚠️ Network Error: {e}. Saving data to local buffer.")
             self._save_to_local(batch)
             # Enter short cooling if network error
-            self._cooling_until = time.time() + 60 # 1 minute cooling
+            # Enter short cooling if network error
+            self._cooling_until = time.time() + 15 # 15s cooling (was 60s) to retry faster
 
     def _save_to_local(self, batch):
         """Save failed batch to a local JSON file."""
@@ -173,6 +189,7 @@ class DatabaseManager:
                 print(f"[DB] ✅ Successfully synced {len(offline_data)} offline events to cloud.")
         except Exception as e:
             print(f"[DB] ⏳ Sync failed, will try again later: {e}")
+            self._cooling_until = time.time() + 15  # Back off for 15s if sync fails
 
     def create_tables(self):
         """Create necessary tables if they don't exist."""

@@ -221,7 +221,7 @@ class RecordingsPage(QWidget):
         date_lbl = QLabel("DATE RANGE")
         date_lbl.setStyleSheet("font-size: 10px; font-weight: 800; color: #94a3b8; letter-spacing: 1px;")
         date_inputs = QHBoxLayout()
-        self.date_start = QDateEdit(QDate.currentDate().addDays(-7))
+        self.date_start = QDateEdit(QDate.currentDate())
         self.date_end = QDateEdit(QDate.currentDate())
         for d in [self.date_start, self.date_end]:
             d.setCalendarPopup(True)

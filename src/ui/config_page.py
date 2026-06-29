@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QLabel, QFrame
 from PySide6.QtGui import (QAction, QIcon, QPixmap, QDesktopServices, QIntValidator, 
                            QColor, QCursor, QPainter, QLinearGradient, QBrush, 
                            QPen, QFont)
-from PySide6.QtCore import Qt, QSize, QUrl, QPropertyAnimation, QEasingCurve, QPoint, QTimer
+from PySide6.QtCore import Qt, QSize, QUrl, QPropertyAnimation, QEasingCurve, QPoint, QTimer, Signal
 from src.core.config_manager import ConfigManager
 import os
 import uuid # For generating unique IDs
@@ -97,6 +97,8 @@ class CollapsibleBox(QWidget):
 
 
 class VideoSourceCard(QFrame):
+    config_saved = Signal()
+
     def __init__(self, parent=None, source_data=None, onDelete=None):
         super().__init__(parent)
         self.setStyleSheet("""
@@ -644,13 +646,31 @@ class VideoSourceCard(QFrame):
             anim.setEasingCurve(QEasingCurve.Type.OutBounce)
             anim.start()
 
-            # Persist to disk
-            ConfigManager().save_config()
+            # Persist to disk SAFELY (Handle stale references)
+            cm = ConfigManager()
+            current_sources = cm.get("video_sources", []) # Get fresh list
+            
+            found = False
+            for i, src in enumerate(current_sources):
+                if src.get("id") == self.source_id:
+                    current_sources[i] = self.source_data # Update entry with our local data
+                    found = True
+                    break
+            
+            if found:
+                cm.set("video_sources", current_sources) # Saves to disk
+            else:
+                # Fallback if somehow not found (unlikely)
+                print(f"⚠️ Warning: Source {self.source_id} not found in current config, forcing append.")
+                current_sources.append(self.source_data)
+                cm.set("video_sources", current_sources)
+
             print(f"Saved source {self.source_id}: {self.source_data}")
 
             # Show success message
             location_name = self.inp_location.text() or f"Source {self.source_id}"
             self.show_status_message(f"✅ Successfully saved: {location_name}", success=True)
+            self.config_saved.emit()
 
         except Exception as e:
             # Show error message if something goes wrong
@@ -752,6 +772,8 @@ class VideoSourceCard(QFrame):
 
 
 class ConfigPage(QWidget):
+    config_saved = Signal()
+
     def __init__(self):
         super().__init__()
         self.setStyleSheet("background-color: #f8fafc;")
@@ -885,6 +907,7 @@ class ConfigPage(QWidget):
 
     def add_video_card(self, source_data):
         card = VideoSourceCard(source_data=source_data, onDelete=self.remove_video_card)
+        card.config_saved.connect(self.config_saved.emit)
         self.video_layout.addWidget(card)
 
     def add_new_source(self):
@@ -911,6 +934,7 @@ class ConfigPage(QWidget):
         # Find and remove by ID (much safer than dict matching)
         sources = [s for s in sources if s.get("id") != source_id]
         self.cm.set("video_sources", sources)
+        self.config_saved.emit()
         
         self.video_layout.removeWidget(card)
         card.deleteLater()

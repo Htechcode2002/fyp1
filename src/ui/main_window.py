@@ -111,6 +111,7 @@ class MainWindow(QMainWindow):
 
         # Page 2: Config
         config_page = ConfigPage()
+        config_page.config_saved.connect(self.refresh_dashboard)
         self.stack.addWidget(config_page)
 
         # Page 3: Recordings

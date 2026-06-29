@@ -13,16 +13,5 @@
         "warning": 20,
         "critical": 50
     },
-    "video_sources": [
-        {
-            "id": "c762994b",
-            "name": "Source c762994b",
-            "location": "",
-            "type": "file",
-            "path": "C:/Users/Charles/Desktop/footage/pedestrain2.mp4",
-            "danger_threshold": 100,
-            "loitering_threshold": 5,
-            "fall_threshold": 2
-        }
-    ]
+    "video_sources": []
 }

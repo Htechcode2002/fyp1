@@ -207,7 +207,7 @@ class DataViewPage(QWidget):
         header_layout.addWidget(self.lbl_status)
 
         # Export button
-        btn_export = QPushButton("Export CSV")
+        btn_export = QPushButton("Export")
         btn_export.setFixedHeight(34)
         btn_export.setCursor(Qt.PointingHandCursor)
         btn_export.setStyleSheet("""

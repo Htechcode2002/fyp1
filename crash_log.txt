@@ -1,0 +1,168 @@
+
+============================================================
+Crash at: 2026-06-29 19:14:07.564307
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:07.737103
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:07.908969
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:08.042260
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:08.173915
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:08.297044
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:11.049723
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 160, in set_frame
+    pixmap = QPixmap.fromImage(image)
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:11.215010
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:11.351323
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:11.494061
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 162, in set_frame
+    scaled = pixmap.scaledToHeight(200, Qt.SmoothTransformation)
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:11.643676
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:11.790648
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 160, in set_frame
+    pixmap = QPixmap.fromImage(image)
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:11.940568
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:12.090110
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:12.215392
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:12.336857
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:12.495031
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:12.647562
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 175, in update_stats
+    def update_stats(self, data):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:12.792867
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 160, in set_frame
+    pixmap = QPixmap.fromImage(image)
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:14:12.927029
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\widgets.py", line 158, in set_frame
+    def set_frame(self, image):
+KeyboardInterrupt
+============================================================
+
+============================================================
+Crash at: 2026-06-29 19:28:00.961479
+Traceback (most recent call last):
+  File "C:\Users\Charles\Desktop\fyp\REAL-TIME CROWD ANALYSIS SYSTEM\src\ui\main_window.py", line 388, in closeEvent
+    def closeEvent(self, event):
+KeyboardInterrupt
+============================================================
